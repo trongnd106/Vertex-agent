@@ -309,3 +309,65 @@ là **cộng thêm**, không thay thế built-in (đối chiếu docstring creat
    tool built-in **`read_file`** trên path `/skills/<name>/SKILL.md` — bằng đúng prompt hướng dẫn
    "progressive disclosure" của middleware (`middleware/skills.py:723`). Kèm ràng buộc `name` phải khớp tên
    thư mục chứa `SKILL.md` (`skills.py:349`). Với `StateBackend`, `invoke(files={"/skills/.../SKILL.md": create_file_data(content)})` — giá trị `files` là `FileData` dict, KHÔNG phải chuỗi trần (`state.py:359`).
+
+---
+
+## 13. Task 2 addition — tool system verified API facts (đã re-verify runtime)
+
+### 13.1 `SandboxBackendProtocol` / `BaseSandbox` abstract surface
+
+- `SandboxBackendProtocol` (`deepagents/backends/protocol.py:840`) extends `BackendProtocol`
+  và thêm các abstract: `id` property, `execute(command, *, timeout)`, `aexecute` (chỉ yêu cầu khi
+  backend có async). `BackendProtocol` abstract cả `upload_files` / `download_files` (`protocol.py:724,756`).
+- `BaseSandbox` (`deepagents/backends/sandbox.py`) là ABC implement `SandboxBackendProtocol`;
+  bắt buộc subclass implement: **`execute`**, **`upload_files`**, **`download_files`**, và **`id` property**
+  (còn lại `ls/read/write/edit/glob/grep` có default build trên `execute()`).
+- File refs: abstract methods tại `backends/sandbox.py` (`execute`, `upload_files`, `download_files`,
+  `id`) và `backends/protocol.py:840-897`.
+- SDK-side result types dùng cho implementation: `ExecuteResponse`, `FileUploadResponse(path, error=None)`,
+  `FileDownloadResponse(path, content=None, error=None)` (`protocol.py:57-130,780-797`).
+
+### 13.2 HarnessProfile key resolution cho fake vs real model
+
+- `create_deep_agent` resolve profile qua `_harness_profile_for_model(model, model_spec)` (`graph.py:607`).
+- Nếu `model` là **string**: `model_spec` giữ nguyên, lookup theo `_get_harness_profile(spec)`
+  (exact `provider:model` → provider prefix → None).
+- Nếu `model` là **pre-built instance** (fake model trong test): `_harness_profile_for_model` dùng
+  `get_model_identifier` (→ `model_name`, `_models.py:60`) và `get_model_provider` (→ `_get_ls_params()['ls_provider']`,
+  `_models.py:75`) để build key `provider:identifier`; nếu identifier rỗng thì fallback theo provider-only
+  (`_get_harness_profile(provider)`).
+- **Fake model `ScriptedChatModel` resolve provider = `"scriptedchatmodel"`, identifier = `None`** (verified).
+  ⇒ Để test role qua agent thật với fake model: override `_get_ls_params(**kwargs)` trả
+  `{"ls_provider": "customer-support", ...}` — khi đó profile đăng ký key `"customer-support"` được áp dụng
+  (cần `**kwargs` vì `BaseChatModel` gọi `_get_ls_params(stop=..., **kwargs)`).
+- Registry nội bộ: `deepagents/profiles/harness/harness_profiles.py::_HARNESS_PROFILES` (dict) +
+  `_get_harness_profile(spec)` (private, dùng cho test deterministic). Register merge additive:
+  `_merge_profiles` union `excluded_tools` (`harness_profiles.py`).
+
+### 13.3 langchain-mcp-adapters 0.3.2 API (MCP client)
+
+- `MultiServerMCPClient(connections, *, tool_name_prefix=False, ...)` (`client.py`).
+- stdio connection spec = dict `{server_name: {"transport": "stdio", "command": str, "args": [...], "env"?}}`
+  (`sessions.py:82-104`). **KHÔNG phải async context manager** — dùng trực tiếp
+  `tools = await client.get_tools()` (mỗi tool call mở session mới).
+- `await client.get_tools(server_name=None)` trả `list[BaseTool]` (`client.py:166`).
+- `tool_name_prefix=True` ⇒ tool name = `f"{server_name}_{tool.name}"` (`tools.py:518`),
+  e.g. `fixture-mcp_get_weather` (server name dùng `-`, separator `_`).
+- **MCP tools là `StructuredTool` async-only** (`tools.py:528`): gọi qua agent bắt buộc `ainvoke`;
+  `invoke` sync raise `StructuredTool does not support sync invocation` (`structured.py:99`).
+
+### 13.4 `mcp` SDK 1.29.1 (fixture server)
+
+- `from mcp.server.fastmcp import FastMCP`; đăng ký tool bằng **`@mcp.tool()`** (có ngoặc) —
+  `@mcp.tool` không ngoặc raise `TypeError: Did you forget to call it?` (`server.py:493`).
+- Chạy stdio: `FastMCP(name).run(transport="stdio")`.
+- `mcp[cli]` không cần cài — `mcp` 1.29.1 là dependency transitive của langchain-mcp-adapters (đã verify trong venv).
+
+### 13.5 Built-in tool surface (đối chiếu với mục 10)
+
+- Agent mặc định bind: `ls, read_file, write_file, edit_file, glob, grep, delete, task`
+  (ngoài `execute` chỉ bind khi backend satisfy `SandboxBackendProtocol`).
+- `HarnessProfile(excluded_tools=...)` remove tool ở tầng middleware `_ToolExclusionMiddleware`
+  (`graph.py:891`); tool còn lại giữ nguyên — đã verify: exclude `execute` thì `ls/read_file/write_file/edit_file/glob/grep/task` vẫn còn.
+- Profile registration **stateful toàn package** (module-level `_HARNESS_PROFILES`) — test cần fixture
+  `_HARNESS_PROFILES.clear()` để không leak giữa các test.
