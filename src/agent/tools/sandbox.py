@@ -200,17 +200,22 @@ def _validate_argv(program: str, tokens: list[str]) -> bool:
             return False
         if tok.startswith("-") and tok != "-":
             chars = tok[1:]
+            # A value-taking short option consumes the NEXT token only when it
+            # is the LAST char of the option cluster (split form `-n 5`). When
+            # the value is attached (`-n5`, `-k1`, `-eroot`), the attached
+            # remainder is the value; the following token is a real operand
+            # that must still be confinement-checked.
+            value_taken = False
             j = 0
             while j < len(chars):
                 ch = chars[j]
                 if ch in spec.short_values:
-                    # Value-taking short option: the rest of the cluster (or the
-                    # next token) is its value.
-                    return True
+                    value_taken = j == len(chars) - 1
+                    break
                 if ch not in spec.short_flags:
                     return False
                 j += 1
-            i += 1
+            i += 2 if value_taken else 1
             continue
         # Positional argument.
         i += 1
@@ -675,11 +680,21 @@ def _collect_operands(program: str, tokens: list[str]) -> list[str]:
             continue
         if tok.startswith("-") and tok != "-":
             chars = tok[1:]
+            # Consume the next token as a value only for the split form, where
+            # the value-taking short option is the LAST char of the cluster
+            # (`-n 5`). If the value is attached (`-n5`/`-k1`/`-eroot`), the
+            # attached remainder is the value and the following token is a file
+            # operand that must NOT be skipped.
             value_taken = False
-            for ch in chars:
+            j = 0
+            while j < len(chars):
+                ch = chars[j]
                 if ch in spec.short_values:
-                    value_taken = True
+                    value_taken = j == len(chars) - 1
                     break
+                if ch not in spec.short_flags:
+                    break
+                j += 1
             i += 2 if value_taken else 1
             continue
         operands.append(tok)

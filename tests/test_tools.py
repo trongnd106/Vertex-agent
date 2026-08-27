@@ -157,6 +157,29 @@ def test_restricted_sandbox_rejects_path_escape(tmp_path):
         assert sb.execute(cmd).exit_code != 0, f"must reject path escape: {cmd!r}"
 
 
+def test_restricted_sandbox_rejects_attached_value_path_escape(tmp_path):
+    # C1 round-2: an attached short-option value (`-n5`, `-k1`, `-eroot`) must not
+    # cause the parser to skip a following file operand in the confinement check.
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    for cmd in (
+        "head -n5 /etc/hostname",
+        "tail -n5 /etc/hostname",
+        "sort -k1 /etc/hostname",
+        "grep -eroot /etc/hostname",
+    ):
+        assert sb.execute(cmd).exit_code != 0, f"must reject attached-value path escape: {cmd!r}"
+
+
+def test_restricted_sandbox_attached_value_still_runs_inside_root(tmp_path):
+    # The split and attached value forms must still work on confined operands.
+    (tmp_path / "a.txt").write_text("line1\nline2\nline3\n", encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    assert sb.execute("head -n 2 a.txt").exit_code == 0
+    assert "line1" in sb.execute("head -n 2 a.txt").output
+    assert "line3" in sb.execute("tail -n 1 a.txt").output
+    assert "line1" in sb.execute("sort -k1 a.txt").output
+
+
 def test_restricted_sandbox_applies_default_timeout(tmp_path):
     import os as _os
 
