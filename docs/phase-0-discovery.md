@@ -304,3 +304,8 @@ là **cộng thêm**, không thay thế built-in (đối chiếu docstring creat
    `context_schema` với field `user_id` (mục 5).
 5. **`AsyncSubAgentMiddleware` và `RubricMiddleware` ⇒ TỒN TẠI** trong `__init__.py` (khớp brief).
 6. **Summary mặc định**: brief Phase 3 nói "đã được thêm mặc định" — **đúng** (mục 7).
+7. **`SkillsMiddleware` KHÔNG expose tool `list_skills`/`read_skill`** (Task 1 verify): skill được nạp vào
+   `state["skills_metadata"]` và **chèn vào system prompt** (name+description+`Read <path>`), body đọc qua
+   tool built-in **`read_file`** trên path `/skills/<name>/SKILL.md` — bằng đúng prompt hướng dẫn
+   "progressive disclosure" của middleware (`middleware/skills.py:723`). Kèm ràng buộc `name` phải khớp tên
+   thư mục chứa `SKILL.md` (`skills.py:349`). Với `StateBackend`, `invoke(files={"/skills/.../SKILL.md": create_file_data(content)})` — giá trị `files` là `FileData` dict, KHÔNG phải chuỗi trần (`state.py:359`).
