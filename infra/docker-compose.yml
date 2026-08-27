@@ -1,0 +1,36 @@
+services:
+  postgres:
+    # Prefer pgvector for the semantic-search-capable long-term Store (Task 5).
+    # A plain postgres:16-alpine would also work for the checkpointer/Store if
+    # pgvector is not needed.
+    image: pgvector/pgvector:pg16
+    container_name: deepagents-postgres
+    environment:
+      POSTGRES_USER: deepagents
+      POSTGRES_PASSWORD: deepagents
+      POSTGRES_DB: deepagents
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepagents -d deepagents"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: Redis for a Redis-backed checkpointer or as a job queue for the
+  # Dreaming graph (Task 6). Not required by default — uncomment when needed.
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: deepagents-redis
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 10
+
+volumes:
+  postgres_data:

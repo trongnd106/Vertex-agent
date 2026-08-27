@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepagents-vertex-agent"
+version = "0.1.0"
+description = "Backend agent built on deepagents (LangChain harness on LangGraph): skills, rich tools, context management, session + long-term memory, and a Dreaming self-improvement graph."
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "deepagents==0.7.9",
+    "langgraph==1.2.11",
+    "langchain==1.3.18",
+    "langmem==0.0.30",
+    "langgraph-checkpoint-postgres==3.1.2",
+    "langchain-openai",
+    "langchain-anthropic",
+    "langchain-mcp-adapters",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
