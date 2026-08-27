@@ -56,7 +56,7 @@ def connect_mcp(
         connections: Optional `connections` dict for `MultiServerMCPClient`.
             Defaults to a stdio connection launching the in-repo fixture.
         tool_name_prefix: When True, MCP tools are namespaced with the server
-            name (e.g. ``fixture-mcp__get_weather``). Default is True.
+            name (e.g. ``fixture-mcp_get_weather``). Default is True.
         server_name: Limit `get_tools` to a single server; None means all.
 
     Returns:

@@ -96,9 +96,10 @@ def test_restricted_sandbox_is_a_sandbox_protocol():
     assert RestrictedShellSandbox(root_dir="/tmp").id
 
 
-def test_restricted_sandbox_allows_read_only_commands():
-    sb = RestrictedShellSandbox(root_dir=".")
-    for cmd in ("pwd", "ls .", "echo hi", "grep -r root /etc/passwd"):
+def test_restricted_sandbox_allows_read_only_commands(tmp_path):
+    (tmp_path / "a.txt").write_text("hello root", encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    for cmd in ("pwd", "ls .", "echo hi", "cat a.txt", f"grep -r hello {tmp_path / 'a.txt'}"):
         assert sb.execute(cmd).exit_code == 0, f"should allow: {cmd!r}"
 
 
@@ -128,6 +129,56 @@ def test_restricted_sandbox_writes_are_rejected():
     sb = RestrictedShellSandbox(root_dir=".")
     uploads = sb.upload_files([("/x.txt", b"data")])
     assert uploads[0].error == "read_only_sandbox"
+
+
+# --------------------------------------------------------------------------- #
+# 2c. Security regressions (review findings C1/I3)                            #
+# --------------------------------------------------------------------------- #
+def test_restricted_sandbox_rejects_destructive_find(tmp_path):
+    (tmp_path / "doomed.txt").write_text("x", encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    # `find` is not in the read-only allowlist at all.
+    assert sb.execute(f"find {tmp_path} -delete").exit_code != 0
+    assert (tmp_path / "doomed.txt").exists(), "find -delete must not delete files"
+
+
+def test_restricted_sandbox_rejects_sort_output_flag(tmp_path):
+    (tmp_path / "a.txt").write_text("b\na\n", encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    assert sb.execute(f"sort -o {tmp_path / 'sorted.txt'} {tmp_path / 'a.txt'}").exit_code != 0
+    assert not (tmp_path / "sorted.txt").exists(), "sort -o must not write a file"
+    assert sb.execute(f"sort --output={tmp_path / 'out.txt'} a.txt").exit_code != 0
+
+
+def test_restricted_sandbox_rejects_path_escape(tmp_path):
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    # Reading a host path outside the containment root must be rejected.
+    for cmd in ("cat /etc/hostname", f"grep -r root /etc/passwd", "ls /"):
+        assert sb.execute(cmd).exit_code != 0, f"must reject path escape: {cmd!r}"
+
+
+def test_restricted_sandbox_applies_default_timeout(tmp_path):
+    import os as _os
+
+    fifo = tmp_path / "fifo"
+    _os.mkfifo(fifo)
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path), default_timeout=1)
+    # `cat fifo` blocks on open (no writer), hitting the configured default timeout.
+    resp = sb.execute("cat fifo")  # no explicit timeout: backend default applies
+    assert resp.exit_code == 124
+    assert "timed out" in resp.output
+
+
+def test_restricted_sandbox_runs_by_argv_not_shell(tmp_path):
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    # Command substitution must be inert: the command runs as a literal argv and
+    # cannot execute the inner `touch`.
+    resp = sb.execute("echo $(touch should_not_exist)")
+    assert resp.exit_code != 0
+    assert not (tmp_path / "should_not_exist").exists()
+    assert not (tmp_path.parent / "should_not_exist").exists()
+
 
 
 # --------------------------------------------------------------------------- #
@@ -175,6 +226,77 @@ def test_local_shell_backend_executes_real_command():
     last = result["messages"][-1]
     assert last.type == "ai"
     assert "hello-from-shell" in str(last.content)
+
+
+# --------------------------------------------------------------------------- #
+# 2c2. RestrictedShellSandbox wired as a deep-agent backend (review finding I2) #
+# --------------------------------------------------------------------------- #
+class FsSandboxModel(ScriptedChatModel):
+    """Drives ls -> read_file -> write_file through the agent's fs tools."""
+
+    def __init__(self, tmp: "pytest.TempPathFactory"):
+        super().__init__()
+        self._tmp = tmp
+        self._step = 0
+
+    def _next_message(self) -> AIMessage:
+        self._step += 1
+        if self._step == 1:
+            args = {"path": str(self._tmp)}
+            name = "ls"
+        elif self._step == 2:
+            args = {"file_path": str(self._tmp / "a.txt")}
+            name = "read_file"
+        elif self._step == 3:
+            args = {"file_path": str(self._tmp / "should_not_exist.txt"), "content": "x"}
+            name = "write_file"
+        else:
+            for message in reversed(self.last_messages):
+                if message.type == "tool":
+                    return AIMessage(content="DONE:" + str(message.content)[:200])
+            return AIMessage(content="no tool result")
+        return AIMessage(
+            content="",
+            tool_calls=[
+                {"name": name, "args": args, "id": f"call_{self._step}", "type": "tool_call"}
+            ],
+        )
+
+
+def test_restricted_sandbox_fs_helpers_real_and_writes_denied(tmp_path):
+    (tmp_path / "a.txt").write_text("unique-marker-123\n", encoding="utf-8")
+    model = FsSandboxModel(tmp_path)
+    agent = create_deep_agent(
+        model=model,
+        backend=RestrictedShellSandbox(root_dir=str(tmp_path)),
+    )
+    result = agent.invoke({"messages": [{"role": "user", "content": "inspect"}]})
+
+    # ls must return the real file, not an empty list.
+    assert any("a.txt" in str(m.content) for m in result["messages"])
+    # read_file must return the real contents, not a hard error / empty.
+    assert any("unique-marker-123" in str(m.content) for m in result["messages"])
+    # write_file must be denied (read-only), and no silent success / no file.
+    wm = [m for m in result["messages"] if m.type == "tool" and m.name == "write_file"]
+    assert wm, "expected a write_file tool message"
+    assert wm[0].status == "error" or "read_only" in str(wm[0].content).lower()
+    assert not (tmp_path / "should_not_exist.txt").exists()
+
+
+def test_restricted_sandbox_native_read_respects_pagination(tmp_path):
+    from deepagents.backends.protocol import ReadResult
+
+    text = "".join(f"line{i}\n" for i in range(10))
+    (tmp_path / "f.txt").write_text(text, encoding="utf-8")
+    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
+    r: ReadResult = sb.read(str(tmp_path / "f.txt"), offset=2, limit=3)
+    assert r.error is None
+    assert "line2" in r.file_data["content"]
+    assert r.file_data["content"].startswith("line2\n")
+    assert r.start_line == 3
+    assert r.end_line == 5
+    assert r.next_offset == 5
+
 
 
 # --------------------------------------------------------------------------- #
