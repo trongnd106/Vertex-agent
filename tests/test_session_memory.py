@@ -181,18 +181,22 @@ def test_postgres_cross_process_persistence():
     def _saver():
         return get_checkpointer(POSTGRES_URL)
 
+    saver_1 = _saver()
+    saver_2 = _saver()
     try:
-        graph_1 = create_deep_agent(model=ContinuityModel(), checkpointer=_saver())
+        graph_1 = create_deep_agent(model=ContinuityModel(), checkpointer=saver_1)
         graph_1.invoke({"messages": [{"role": "user", "content": "p1"}]}, config=cfg)
 
         # A brand-new saver + graph (real process restart) resumes the thread.
-        graph_2 = create_deep_agent(model=ContinuityModel(), checkpointer=_saver())
+        graph_2 = create_deep_agent(model=ContinuityModel(), checkpointer=saver_2)
         resumed = graph_2.invoke(
             {"messages": [{"role": "user", "content": "p2"}]}, config=cfg
         )
         assert _human_texts(resumed["messages"]) == ["p1", "p2"]
         assert resumed["messages"][-1].content == "saw=2 last='p2'"
     finally:
+        saver_1.conn.close()
+        saver_2.conn.close()
         # Self-cleanup: a fresh saver deletes this test's thread.
         saver = _saver()
         try:
@@ -256,6 +260,20 @@ def test_cleanup_deletes_only_stale_threads():
             assert _human_texts(resumed["messages"]) == ["keep", "again"]
         finally:
             saver2.conn.close()
+
+        # Negative control: a DELETED thread_id no longer resumes — re-invoking
+        # the stale thread from a fresh graph over a fresh saver (no in-memory
+        # state can leak) must see NO prior history: saw=1, not saw=2.
+        saver3 = get_checkpointer(POSTGRES_URL)
+        try:
+            reborn = create_deep_agent(model=ContinuityModel(), checkpointer=saver3).invoke(
+                {"messages": [{"role": "user", "content": "hello-again"}]},
+                config={"configurable": {"thread_id": stale}},
+            )
+            assert reborn["messages"][-1].content == "saw=1 last='hello-again'"
+            assert _human_texts(reborn["messages"]) == ["hello-again"]
+        finally:
+            saver3.conn.close()
     finally:
         for tid in (stale, fresh):
             try:
