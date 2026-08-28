@@ -374,3 +374,45 @@ là **cộng thêm**, không thay thế built-in (đối chiếu docstring creat
   (`graph.py:891`); tool còn lại giữ nguyên — đã verify: exclude `execute` thì `ls/read_file/write_file/edit_file/glob/grep/task` vẫn còn.
 - Profile registration **stateful toàn package** (module-level `_HARNESS_PROFILES`) — test cần fixture
   `_HARNESS_PROFILES.clear()` để không leak giữa các test.
+
+---
+
+## 14. Task 5 addition — long-term memory probe verdict (0.7.9)
+
+Live probe (deterministic, fake model, no LLM) driving `write_file("/memory/notes.md")`
+through `create_deep_agent(..., store=InMemoryStore(), context_schema=<schema>, backend=CompositeBackend(...))`
+with an instrumented `StoreBackend(namespace=...)` factory:
+
+> **Verdict: `runtime.context.user_id` DOES work in 0.7.9 for per-user Store
+> namespaces — but ONLY on these (surprising) conditions:**
+
+1. **Context value is passed via `invoke(..., context=...)`, NOT via
+   `config={"configurable": {...}}`.** The latter leaves `Runtime.context = None`
+   (verified: namespace became the error branch, nothing written under the id).
+   LangGraph 1.2.11 builds `Runtime.context` in `pregel/main.py` from the
+   `context` kwarg (+ `_coerce_context`), and only statically known config keys
+   (`thread_id`, `checkpoint_id`, ...) live in `configurable`.
+2. **`context_schema` must be a `dataclass`/pydantic model, not a `TypedDict`.**
+   `_coerce_context` instantiates the schema from the dict **only when it is a
+   BaseModel/dataclass**; a `TypedDict` context stays a plain `dict` and
+   `runtime.context.user_id` raises `AttributeError`.
+   - Verified matrix (recorded namespaces after a real write):
+     - `TypedDict + context={"user_id": "u1"}` → `context` is `dict` → `.user_id`
+       `AttributeError` → namespace error string.
+     - `@dataclass UserCtx + context={"user_id": "u1"}` → coerced to
+       `UserCtx(user_id='u1')` → `("memories", "u1")` ✓.
+     - `@dataclass + context=UserCtx(user_id="u1")` (already an instance) →
+       `("memories", "u1")` ✓.
+3. **Store resolution**: `StoreBackend(store=None)` + graph bound with
+   `store=` resolves via `get_store()` from the execution context at write time
+   (verified; see §5). `InMemoryStore` shared across two graphs models a real
+   Store exactly like `MemorySaver` does for the checkpointer.
+
+**⇒ Shipped mode (Task 5): context-schema multi-user with a `dataclass`
+`UserContext` schema** — `src/memory/memory_backend.py` exports
+`make_namespace_factory()` returning `("memories", rt.context.user_id)` and
+`MULTI_USER = True`. The plan's `TypedDict`-based example (plan §4.5 / brief
+line 28) is therefore adjusted: use a dataclass context schema. Callers MUST
+invoke with `context=UserContext(user_id=...)`; without it the factory raises a
+clear `RuntimeError` instead of writing into a shared namespace (no fabricated
+fallback). "Fixed-user" mode was NOT needed.
