@@ -23,7 +23,7 @@ Layering notes (see `docs/phase-0-discovery.md`):
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -35,6 +35,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
 
 from src.agent.tools import create_support_ticket, query_order
+from src.memory.dreaming.enqueue import EnqueueAfterTurnMiddleware
 from src.memory.memory_backend import (
     USER_CONTEXT_SCHEMA,
     UserContext,
@@ -87,6 +88,7 @@ def build_agent(
     backend: BackendProtocol | None = None,
     tools: Sequence[BaseTool] = DEFAULT_TOOLS,
     context_schema: type[Any] = DEFAULT_CONTEXT_SCHEMA,
+    enqueue: Callable[[str, str], None] | None = None,
 ) -> CompiledStateGraph:
     """Build a compiled deep agent wired with the vertex-agent backend.
 
@@ -112,6 +114,10 @@ def build_agent(
             invoke. Defaults to ``UserContext`` so that
             ``invoke(..., context=UserContext(user_id=...))`` gives each user a
             distinct ``("memories", user_id)`` namespace.
+        enqueue: Optional end-of-turn hook for Phase 6 dreaming:
+            ``enqueue(thread_id, user_id)`` is called (via an ``after_agent``
+            middleware, enqueue-only) after every agent turn finishes. ``None``
+            (default) wires no middleware — behaviour identical to Task 5.
 
     Returns:
         A compiled agent graph. Invoke with
@@ -122,6 +128,9 @@ def build_agent(
         system_prompt = build_system_prompt()
     if backend is None:
         backend = build_memory_filesystem()
+    middleware: list[Any] = []
+    if enqueue is not None:
+        middleware.append(EnqueueAfterTurnMiddleware(enqueue))
     return create_deep_agent(
         model=model,
         tools=list(tools),
@@ -131,6 +140,7 @@ def build_agent(
         checkpointer=checkpointer,
         store=store,
         context_schema=context_schema,
+        middleware=middleware or None,
     )
 
 

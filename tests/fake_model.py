@@ -13,7 +13,7 @@ from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableLambda
 from langchain_core.tools import BaseTool
 
 
@@ -98,4 +98,51 @@ class ScriptedChatModel(BaseChatModel):
         return self
 
 
-__all__ = ["ScriptedChatModel"]
+class StructuredScriptedModel(ScriptedChatModel):
+    """``ScriptedChatModel`` + a deterministic ``with_structured_output``.
+
+    The dreaming graph (Phase 6) extracts its `DreamOutput` via the same
+    model-level primitive `create_agent`'s `response_format` resolves to
+    (``BaseChatModel.with_structured_output``,
+    ``langchain_core/language_models/chat_models.py:2374``); this fake overrides
+    that hook so the whole dream pipeline runs deterministically without an LLM:
+    `with_structured_output(schema)` yields a `Runnable` that replays a scripted
+    FIFO of schema instances (Ruling M1: no network, no keys). Production passes
+    a cheap real model that supports structured output natively.
+    """
+
+    def __init__(
+        self,
+        script: Sequence[BaseMessage] | None = None,
+        reply: str = "Final reply.",
+        structured: Sequence[Any] | None = None,
+    ):
+        super().__init__(script=script, reply=reply)
+        self._structured = list(structured or [])
+        self._structured_calls = 0
+
+    def with_structured_output(
+        self,
+        schema: type[Any],
+        *,
+        include_raw: bool = False,
+        **kwargs: Any,
+    ) -> Runnable:
+        structured = self._structured
+
+        def _invoke(_input: Any, **_: Any) -> Any:
+            self._structured_calls += 1
+            if structured:
+                obj = structured.pop(0)
+                return obj if isinstance(obj, schema) else schema.model_validate(obj)
+            return schema()
+
+        return RunnableLambda(_invoke)
+
+    @property
+    def structured_calls(self) -> int:
+        """Number of times `with_structured_output(...).invoke` was called."""
+        return self._structured_calls
+
+
+__all__ = ["ScriptedChatModel", "StructuredScriptedModel"]

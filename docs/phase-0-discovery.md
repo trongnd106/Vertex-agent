@@ -416,3 +416,42 @@ line 28) is therefore adjusted: use a dataclass context schema. Callers MUST
 invoke with `context=UserContext(user_id=...)`; without it the factory raises a
 clear `RuntimeError` instead of writing into a shared namespace (no fabricated
 fallback). "Fixed-user" mode was NOT needed.
+
+## 15. Task 6 addition — dreaming probe findings (deepagents 0.7.9 / langgraph 1.2.11 / langmem 0.0.30)
+
+1. **LangMem veto (plan brief step 1).** `langmem 0.0.30` HAS
+   `ReflectionExecutor` (plus `create_memory_manager`, `create_thread_extractor`),
+   so it passes the existence probe — but it is **not usable** for this task:
+   `langmem/reflection.py` runs reflection on its **own local form** (spawns a
+   non-daemon worker thread by default), owns its own Store schema/namespaces and
+   write semantics, and does not expose Pydantic `DreamOutput`-style structured
+   fields, per-user `("memories", user_id)` splitting, "never overwrite existing
+   memories" (S8) control, or deterministic narrow tests. ⇒ Own dream graph
+   written (task-6 decisions), verdict recorded in the report.
+2. **Messages are NOT in the checkpoint tuple's `channel_values`.**
+   deepagents stores conversation on a `DeltaChannel` (`deepagents/graph.py:73`,
+   `_messages_delta_reducer`), `snapshot_frequency=50`; a tuple's
+   `channel_values` holds only the latest PIP-augmented history. Full-message
+   reconstruction needs `channels_from_checkpoint` +
+   `get_delta_channel_history` (`langgraph/pregel/_checkpoint.py:229`).
+   `load_thread_messages(tuple)` round-trips exactly — verified it reproduces
+   `agent.get_state().values["messages"]`.
+3. **Middleware hooks are real graph nodes** (`langchain/agents/factory.py:1624-1645`),
+   so `after_agent` (`langchain/agents/middleware/types.py:266`) can call
+   `get_config()` → `thread_id` and read `runtime.context.user_id` from the
+   `Runtime` it receives (live probed: returned "mw-probe"/"u7"). This makes the
+   enqueue-only hook work without the hook owning the graph; processing stays
+   asynchronous (queue/cold-scan). There is NO `on_tool_end` hook (discovery §12).
+4. **Store Item has no read tracking.** `langgraph.store.base.Item` exposes only
+   `(key, namespace, value, created_at, updated_at)`: `updated_at` bumps **only
+   on `put`** (verified on PostgresStore + InMemoryStore). "Not read in N days"
+   (plan step 5) is therefore approximateable only by `updated_at`; documented as
+   an honest limitation, and only `priority`-carrying items are aged.
+5. **Consolidation staleness is testable in Postgres via raw SQL.** Prefix text
+   is `".".join(namespace)` (`_namespace_to_text`), so `UPDATE store SET
+   updated_at = now() - n * interval '1 day' WHERE key=%s AND prefix=%s` backdates
+   a row that `store.search`/`get` then report as stale (used by the PG
+   consolidation test; commit() is safe whether or not autocommit is on).
+6. **`checkpointer.get_tuple` / `get_delta_channel_history` confirmed** on
+   MemorySaver + PostgresSaver (live), so `load_thread_messages` and
+   `scan_thread_ids` are backend-agnostic.
