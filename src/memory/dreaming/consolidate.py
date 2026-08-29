@@ -247,6 +247,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db-url", default=None, help="Postgres URL; defaults to DATABASE_URL env. Omit for in-memory.")
     parser.add_argument("--user", action="append", default=None, help="user_id(s) to consolidate; defaults to every user found.")
     parser.add_argument("--stale-after-days", type=int, default=30, help="Aging window (default 30).")
+    parser.add_argument(
+        "--heartbeat-file",
+        default=None,
+        help="Optional path to write a timestamped heartbeat after a successful run "
+        "(consumed by `python -m src.memory.dreaming.alerts`).",
+    )
     args = parser.parse_args(argv)
 
     store = _open_store(args.db_url)
@@ -265,6 +271,11 @@ def main(argv: list[str] | None = None) -> int:
                 updated_keys=total.updated_keys + res.updated_keys,
             )
         print(f"consolidated {len(namespaces)} namespace(s); {total.examined} items examined")
+        if args.heartbeat_file:
+            from src.memory.dreaming.alerts import write_heartbeat
+
+            write_heartbeat(args.heartbeat_file)
+            print(f"heartbeat written to {args.heartbeat_file}")
         return 0
     finally:
         _close_store(store)

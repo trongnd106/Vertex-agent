@@ -88,6 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--user", required=True, help="user_id whose threads to dream (thread_id->user mapping is not persisted).")
     parser.add_argument("--model", default="openai:gpt-4o-mini", help="Cheap extraction model spec.")
     parser.add_argument("--thread-limit", type=int, default=None, help="Only dream over the first N threads (lexicographic).")
+    parser.add_argument(
+        "--heartbeat-file",
+        default=None,
+        help="Optional path to write a timestamped heartbeat after a successful run "
+        "(consumed by `python -m src.memory.dreaming.alerts`).",
+    )
     args = parser.parse_args(argv)
 
     store = _open_store(args.db_url)
@@ -111,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
                     f"lessons={len(state.get('lessons', []))} "
                     f"conflicts={len(state.get('conflicts', []))}"
                 )
+        if args.heartbeat_file:
+            from src.memory.dreaming.alerts import write_heartbeat
+
+            write_heartbeat(args.heartbeat_file)
+            print(f"heartbeat written to {args.heartbeat_file}")
         return 0
     finally:
         for handle in (store, checkpointer):

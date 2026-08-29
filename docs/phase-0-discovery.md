@@ -524,3 +524,108 @@ Nằm tại `deepagents/middleware/filesystem.py`:
   burst bị throttle theo user, fake clock deterministic).
 - KHÔNG có web server/FastAPI/Gateway (Ruling M4) — module là thư viện mỏng cho
   tầng front-door tương lai gọi `allow()`. Tests: `tests/test_rate_limit.py`.
+
+---
+
+## 17. Task 8 addition — deployment (langgraph-cli 0.4.31) + load test + dreaming alerts
+
+### 17.1 langgraph-cli Dockerfile (S10 compat verified with evidence)
+
+- CLI: `langgraph-cli==0.4.31` (`langgraph --version`). Lệnh dùng được:
+  `dockerfile`, `build`, `up`, `dev`, `validate`, `deploy`, `new`.
+- `langgraph dockerfile ./Dockerfile` **bắt buộc có `langgraph.json`** trước
+  (lỗi `File 'langgraph.json' does not exist` nếu thiếu). Dockerfile KHÔNG được
+  viết tay — CLI sinh từ config (`config.py::config_to_docker` →
+  `python_config_to_docker`).
+- Dockerfile sinh ra: `FROM langchain/langgraph-api:3.11` (base image server
+  runtime, python 3.11), `ADD . /deps/dev`, `uv pip install -e .` (cài **gói
+  local** ⇒ SDK version do chính `pyproject.toml` khóa), rồi set
+  `ENV LANGGRAPH_STORE=...`, `LANGGRAPH_CHECKPOINTER="postgres"`,
+  `LANGSERVE_GRAPHS='{"agent": ".../src/agent/server.py:graph"}'`.
+- **S10 verdict (biên bản xác nhận bằng chạy build + inspect image)**:
+  `langgraph build -t vertex-agent:task8` thành công (exit 0), pull
+  `langchain/langgraph-api:3.11`, cài gói local. Inspect bên trong image cho
+  **byte-exact đúng bản cài trong env**:
+  `langgraph==1.2.11`, `langgraph-api==0.13.2`, `langgraph-checkpoint-postgres==3.1.2`,
+  `deepagents==0.7.9`, `langchain==1.3.18`. Nghĩa là artifact KHÔNG tham chiếu
+  runtime SDK mới hơn: SDK bị khóa bởi chính pyproject 1.2.11, runtime server
+  (`langgraph-api 0.13.2`) là image tương thích CLI khuyến nghị cho 1.2.11.
+  (Xác nhận `import src.agent.server; graph` trong image lỗi chỉ do
+  `OPENAI_API_KEY` thiếu => đúng kỳ vọng M1, không phải lỗi artifact.)
+- `langgraph.json` (repo root) shape sử dụng:
+  ```json
+  {
+    "python_version": "3.11",
+    "graphs": { "agent": "./src/agent/server.py:graph" },
+    "env": { "AGENT_MODEL": "openai:gpt-4o-mini" },
+    "dependencies": ["."],
+    "checkpointer": "postgres"
+  }
+  ```
+  - `graphs` key → `module:attr`, attr phải là **graph đã compile ở module level**
+    (`./src/agent/server.py:graph`). Server module mới `src/agent/server.py`
+    (THIN wrapper, KHÔNG đổi `build_agent`) build `build_agent(model=<AGENT_MODEL>)`
+    với `store=None`/`checkpointer=None` để deepagents resolve qua
+    `get_store()`/`get_checkpointer()` từ runtime (`store`/`checkpointer` key trong
+    config) — discovery §14.3.
+  - `python_version` mặc định `3.11` (khớp env). `checkpointer: "postgres"` =>
+    `ENV LANGGRAPH_CHECKPOINTER='"postgres"'`.
+  - **Store index được chủ động BỎ** (kèm `store.index` với embed openai:
+    text-embedding-3-small/1536) để server có thể boot mà không cần key/model
+    embedding (M1) — store index-free vẫn đủ cho per-user byte memory; muốn
+    vector search mới thêm lại index khi có key.
+  - `langgraph validate` PASS (1 graph found). `langgraph dockerfile ./Dockerfile`
+    PASS sinh `Dockerfile`. Build PASS (mục trên, final image
+    `vertex-agent:task8-final`, base `langchain/langgraph-api:3.11`).
+    Chưa chạy `langgraph up`/`dev` với model thật (M1: không có LLM key) — server
+    chỉ chạy thật khi có key.
+
+### 17.2 Load test chống Postgres thật
+
+- `src/api/load_test.py::run_concurrent_sessions` — N `thread_id` song song qua
+  `ThreadPoolExecutor`, chia sẻ 1 `PostgresSaver` + `PostgresStore` (cùng DB
+  `infra/docker-compose.yml`). Model fake deterministic (Ruling M1) mỗi session
+  ghi fact riêng vào `/memory/notes.md` (turn 1) và đọc lại (turn 2 —
+  **resume** cùng thread). Assert: mỗi session đọc lại ĐÚNG fact của mình và
+  không nhiễm fact session khác (cô lập checkpointer + Store). Throughput
+  REPORT, không assert số ảo.
+- **Kết quả chạy thật (DB up)**: `python -m src.api.load_test --sessions 8 --turns 2`
+  → 8/8 hoàn tất, VERDICT PASS, total elapsed ~1.4s, throughput **~5.6 sessions/s /
+  ~11.2 invokes/s**, isolation OK. (Đây là số đo thật trên máy này; KHÔNG phải
+  ngưỡng cam kết capacity.)
+- **Ngưỡng (`đạt ngưỡng kỳ vọng`) — khiêm tốn & trung thực**: tất cả N session
+  hoàn tất không lỗi/timeout, isolation đúng 100%, throughput > 0 (báo cáo).
+  Không bịa con số perf tuyệt đối.
+- `tests/test_load_test.py`: 2 test in-memory (deterministic, luôn chạy) + 1
+  `@skip_postgres` `test_concurrent_sessions_isolated_over_postgres` (chạy thật
+  khi DB up, skip khi không).
+
+### 17.3 Dreaming alert — nguồn dữ liệu trung thực (không broker)
+
+- Không có durable queue (no Celery/BullMQ — ruling) ⇒ hai tín hiệu từ dữ liệu
+  thật có sẵn:
+  1. **Heartbeat freshness** (dreaming job fail/slow): consolidate (`--heartbeat-file`)
+     và scan (`--heartbeat-file`) ghi timestamp heartbeat sau khi chạy thành công;
+     `alerts.py::is_heartbeat_stale` alert nếu mất/quá `--max-age-seconds`.
+  2. **Backlog** (hàng chờ chưa dream): `discover_dreamed_threads(store)` lấy
+     `thread_id` từ item dream (facts/`memories`, lessons/`system.lessons`,
+     conflicts/`system.conflict_markers` — mọi item dream đều mang `thread_id`,
+     `dream.py::write_dream_results`). `compute_backlog(scan_thread_ids(saver),
+     dreamed)` = thread trong checkpointer chưa có artifact dream. Đây là proxy
+     "hàng chờ" duy nhất đúng dữ liệu thật.
+- `python -m src.memory.dreaming.alerts --db-url ... --heartbeat-file ...`
+  in findings; exit 0 = HEALTHY, exit 1 = ALERT (đã chạy thật DB up: fresh hb +
+  backlog<50 → HEALTHY/0; hb stale 48h → ALERT/1). Logic core thuần (clock+state
+  injectable) ở `check_health`; unit tests `tests/test_alerts.py` (12 test,
+  deterministic, không DB).
+
+### 17.4 Files của Task 8
+
+- `src/agent/server.py` (server module: `graph` compiled, model từ `AGENT_MODEL`).
+- `langgraph.json` + `Dockerfile` (CLI-sinh, validated + built).
+- `src/api/load_test.py` + `tests/test_load_test.py`.
+- `src/memory/dreaming/alerts.py` (`write_heartbeat`/`read_heartbeat`/
+  `is_heartbeat_stale`/`compute_backlog`/`check_health`/`discover_dreamed_threads`)
+  + heartbeat option trong `consolidate.py`/`scan.py` + `tests/test_alerts.py`.
+- `docs/runbook-operations.md`.
+
