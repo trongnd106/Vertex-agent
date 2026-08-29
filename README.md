@@ -23,6 +23,12 @@ Tài liệu discovery — bản đồ public API của deepagents/langgraph ở 
 
 - [`docs/phase-0-discovery.md`](docs/phase-0-discovery.md)
 
+## Vận hành & Bảo mật
+
+- [`docs/runbook-observability.md`](docs/runbook-observability.md) — LangSmith tracing zero-code (env vars, bật/tắt theo thread, validate thủ công).
+- [`docs/tool-audit-checklist.md`](docs/tool-audit-checklist.md) — audit `HarnessProfile`/`excluded_tools` theo role.
+- [`docs/phase-0-discovery.md`](docs/phase-0-discovery.md) §16 — FilesystemPermission (`deny`/`interrupt`) và rate limiter.
+
 ## Hạ tầng local
 
 Postgres (dùng chung cho checkpointer + Store, bật sẵn pgvector) và Redis (tuỳ chọn) được khai báo trong:

@@ -455,3 +455,72 @@ fallback). "Fixed-user" mode was NOT needed.
 6. **`checkpointer.get_tuple` / `get_delta_channel_history` confirmed** on
    MemorySaver + PostgresSaver (live), so `load_thread_messages` and
    `scan_thread_ids` are backend-agnostic.
+
+---
+
+## 16. Task 7 addition — LangSmith auto-tracing, FilesystemPermission, rate limiter (0.7.9 / langgraph 1.2.11 / langchain-core 1.6.0 / langsmith 0.11.1)
+
+### 16.1 LangSmith tracing là automatic (zero-code) — đã verify runtime
+
+- `create_deep_agent` compile qua `create_agent` (langchain agents) →
+  graph LangGraph (`deepagents/graph.py`, return `create_agent(...)` ~line 921).
+- LangGraph Pregel luôn build callback manager cho mỗi bước:
+  `langgraph/pregel/main.py` gọi `get_callback_manager_for_config` /
+  `get_async_callback_manager_for_config` (lines 2772 / 3185), đi qua
+  `CallbackManager.configure` (`langchain_core/callbacks/manager.py`).
+- `configure` tự gắn `LangChainTracer` khi tracing bật (`manager.py:2524-2542`):
+  `tracing_v2_enabled_` = `_tracing_v2_is_enabled()`
+  (`langchain_core/tracers/context.py:132`) = `ls_utils.tracing_is_enabled()`
+  (`langsmith/utils.py:121`) — đọc env `LANGSMITH_TRACING=true` (fallback
+  `LANGCHAIN_TRACING_V2`).
+- **Probe thật (fake model, đặt `LANGSMITH_TRACING=true` + key giả):** model nhận
+  `run_manager.handlers` chứa instance `LangChainTracer` → KHÔNG cần thêm code
+  instrumentation nào trong repo. Run thật gửi lên LangSmith; key giả → 403 bị
+  log non-fatal, run vẫn hoàn tất. Env-gated test:
+  `tests/test_observability.py::test_langsmith_tracer_attached_when_env_enabled`
+  (marker `langsmith`, skip khi thiếu `LANGSMITH_API_KEY`). Runbook:
+  `docs/runbook-observability.md`.
+- Per-thread/choose-run: `with tracing_v2_enabled(project_name=...) as cb:
+  agent.invoke(...)` — set `tracing_v2_callback_var`; `cb.get_run_url()` trả link
+  trace (`context.py:40-82`).
+- Lưu ý pytest-langsmith plugin: marker `langsmith` bị plugin này wrap bằng
+  `langsmith.testing` (dataset/experiment). Bỏ qua bằng `LANGSMITH_TEST_TRACKING=false`
+  — wrapper trả nguyên hàm (`testing/_internal.py:363-381`).
+
+### 16.2 `FilesystemPermission` — field, mode, và phạm vi thật
+
+Nằm tại `deepagents/middleware/filesystem.py`:
+
+- **Fields** (`filesystem.py:385-419`, dataclass): `operations: list[Literal["read","write"]]`,
+  `paths: list[str]` (globs, phải bắt đầu bằng `/`, không chứa `..` — ValueError;
+  không chứa `~` — NotImplementedError), `mode: Literal["allow","deny","interrupt"] = "allow"`.
+- **Flow**: `create_deep_agent(permissions=[...])` (`graph.py:277`) → truyền
+  `_permissions=` vào `FilesystemMiddleware` cho main agent (`graph.py:819-825`)
+  và general-purpose subagent (`graph.py:752-756`); `deny` enforced tại từng tool
+  (`filesystem.py:1770` read_file, `2043` write_file...) trả `ToolMessage` error
+  `"Error: permission denied for read/write on <path>"`; kết quả bulk (`ls`/`glob`/
+  `grep`) bị lọc `deny` trước khi trả (`filesystem.py:1786,2325,2506`...).
+- **`interrupt`**: `_build_interrupt_on_from_permissions` (`middleware/_fs_interrupt.py:156`)
+  → `interrupt_on` dict → `HumanInTheLoopMiddleware` cho cả main + GP subagent
+  (`graph.py:870-875`); HITL gọi `interrupt(hitl_request)` (`langchain/agents/middleware/human_in_the_loop.py:456`)
+  ⇒ `invoke` trả state kèm `__interrupt__` (`Interrupt`, value = HITLRequest với
+  `action_requests`/`review_configs`); tool KHÔNG chạy.
+- **PHẠM VI THẬT (honest scope):** chỉ gate **7 tool filesystem**: `ls`,
+  `read_file`, `write_file`, `edit_file`, `delete`, `glob`, `grep` — map
+  `_FS_TOOL_PATH_ARGS` (`_fs_interrupt.py:38-46`). KHÔNG gate `execute` (sandbox
+  Task 2), không gate `task`/custom tools. `execute` chỉ bị chặn bởi
+  `HarnessProfile.excluded_tools` (role) + chính sandbox rim
+  (`src/agent/tools/sandbox.py`). Test guard:
+  `tests/test_permissions.py::test_permissions_interrupt_mapping_never_gates_execute`.
+- Ngoài ra `excluded_tools` của `HarnessProfile` là **model-facing calibration,
+  KHÔNG phải security surface** (docstring chính chủ, `harness_profiles.py`).
+
+### 16.3 Rate limiter (Task scope theo Ruling M4)
+
+- Token bucket `RateLimiter(capacity, refill_rate, time_fn=time.monotonic)`
+  (`src/api/rate_limit.py`): `allow(user_id, cost=1.0) -> bool`, `tokens(user_id)`,
+  `reset()`, lock đơn bảo vệ toàn bộ bucket (thread-safe), clock injectable,
+  token không âm. Tiện CLI stdlib-only: `python -m src.api.rate_limit` (demo
+  burst bị throttle theo user, fake clock deterministic).
+- KHÔNG có web server/FastAPI/Gateway (Ruling M4) — module là thư viện mỏng cho
+  tầng front-door tương lai gọi `allow()`. Tests: `tests/test_rate_limit.py`.
