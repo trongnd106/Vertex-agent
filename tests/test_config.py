@@ -277,3 +277,134 @@ class TestSettingsConfiguration:
 
         assert settings1.agent_model == "openai:gpt-4-turbo"
         assert settings2.agent_model == "openai:gpt-4o-mini"  # default
+
+
+class TestEnvExampleFile:
+    """Test that .env.example file can be used as a template for .env."""
+
+    def test_env_example_file_exists(self):
+        """Test that .env.example file exists in project root."""
+        env_example_path = Path(__file__).parent.parent / ".env.example"
+        assert env_example_path.exists(), f".env.example not found at {env_example_path}"
+
+    def test_env_example_contains_all_settings_fields(self):
+        """Test that .env.example documents all Settings fields."""
+        env_example_path = Path(__file__).parent.parent / ".env.example"
+        content = env_example_path.read_text()
+
+        # All field names should be represented in UPPER_SNAKE_CASE
+        field_names = [
+            "AGENT_MODEL",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DATABASE_URL",
+            "STALE_THREAD_MAX_AGE_DAYS",
+            "DREAMING_HEARTBEAT_MAX_AGE_SECONDS",
+            "DREAMING_MAX_BACKLOG",
+            "DREAMING_STALE_AFTER_DAYS",
+            "SUMMARIZATION_TRIGGER_TOKENS",
+            "SUMMARIZATION_KEEP_MESSAGES",
+            "TOOL_OUTPUT_MAX_LENGTH",
+            "SANDBOX_DEFAULT_TIMEOUT_SECONDS",
+            "RATE_LIMIT_CAPACITY",
+            "RATE_LIMIT_REFILL_RATE",
+            "TAVILY_API_KEY",
+            "LANGSMITH_TRACING",
+            "LANGSMITH_API_KEY",
+            "LANGSMITH_PROJECT",
+        ]
+
+        for field_name in field_names:
+            assert (
+                field_name in content
+            ), f"Field {field_name} not documented in .env.example"
+
+    def test_env_example_has_helpful_comments(self):
+        """Test that .env.example includes documentation comments."""
+        env_example_path = Path(__file__).parent.parent / ".env.example"
+        content = env_example_path.read_text()
+
+        # Should have section headers and comments explaining variables
+        assert "=== ====" in content or "===" in content, "Missing section headers"
+        assert "Default:" in content, "Missing default value documentation"
+        assert "Required" in content or "optional" in content, (
+            "Missing requirement level documentation"
+        )
+
+    def test_env_example_can_load_as_settings_with_defaults(self, monkeypatch):
+        """Test that .env.example can be copied to .env and Settings loads with defaults."""
+        env_example_path = Path(__file__).parent.parent / ".env.example"
+        content = env_example_path.read_text()
+
+        # Parse the .env.example file and set environment variables for values that aren't empty
+        for line in content.split("\n"):
+            line = line.strip()
+            # Skip comments and empty lines
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                # Only set non-empty values
+                if value and not value.startswith("#"):
+                    monkeypatch.setenv(key, value)
+
+        # Should be able to create Settings without errors
+        settings = Settings()
+
+        # Verify critical fields have expected values from .env.example
+        assert settings.agent_model == "openai:gpt-4o-mini"
+        assert settings.stale_thread_max_age_days == 30
+        assert settings.dreaming_heartbeat_max_age_seconds == 3600
+        assert settings.dreaming_max_backlog == 50
+        assert settings.dreaming_stale_after_days == 30
+        assert settings.summarization_trigger_tokens == 20000
+        assert settings.summarization_keep_messages == 6
+        assert settings.tool_output_max_length == 4000
+        assert settings.sandbox_default_timeout_seconds == 30
+        assert settings.rate_limit_capacity == 5.0
+        assert settings.rate_limit_refill_rate == 1.0
+        assert settings.langsmith_tracing is False
+        assert settings.langsmith_project == "vertex-agent"
+
+    def test_env_example_all_fields_documented(self):
+        """Test that all 16 Settings fields are documented in .env.example."""
+        env_example_path = Path(__file__).parent.parent / ".env.example"
+        content = env_example_path.read_text()
+
+        # Count documented fields (lines with VAR_NAME=)
+        documented_fields = []
+        for line in content.split("\n"):
+            line = line.strip()
+            if "=" in line and not line.startswith("#") and line:
+                key = line.split("=", 1)[0].strip()
+                if key.isupper():
+                    documented_fields.append(key)
+
+        # Ensure all 16 fields are documented
+        expected_fields = {
+            "AGENT_MODEL",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DATABASE_URL",
+            "STALE_THREAD_MAX_AGE_DAYS",
+            "DREAMING_HEARTBEAT_MAX_AGE_SECONDS",
+            "DREAMING_MAX_BACKLOG",
+            "DREAMING_STALE_AFTER_DAYS",
+            "SUMMARIZATION_TRIGGER_TOKENS",
+            "SUMMARIZATION_KEEP_MESSAGES",
+            "TOOL_OUTPUT_MAX_LENGTH",
+            "SANDBOX_DEFAULT_TIMEOUT_SECONDS",
+            "RATE_LIMIT_CAPACITY",
+            "RATE_LIMIT_REFILL_RATE",
+            "TAVILY_API_KEY",
+            "LANGSMITH_TRACING",
+            "LANGSMITH_API_KEY",
+            "LANGSMITH_PROJECT",
+        }
+
+        documented_set = set(documented_fields)
+        assert (
+            expected_fields.issubset(documented_set)
+        ), f"Missing fields: {expected_fields - documented_set}"
