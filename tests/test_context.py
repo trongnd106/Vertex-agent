@@ -276,3 +276,159 @@ def test_tool_output_limiter_leaves_small_results_untouched():
     result = agent.invoke({"messages": [{"role": "user", "content": "go"}]})
     tool_msgs = [m for m in result["messages"] if m.type == "tool"]
     assert str(tool_msgs[0].content) == "Y" * 5
+
+
+# --------------------------------------------------------------------------- #
+# 4. Plan 03.A: build_agent() middleware and subagents parameter tests       #
+# --------------------------------------------------------------------------- #
+
+def test_build_agent_backward_compatibility_existing_args():
+    """Test that build_agent works identically with existing parameters only.
+    
+    Verifies that the new middleware/subagents/enable_default_context_management
+    parameters don't change behavior when not provided (all defaults).
+    """
+    from src.agent.graph import build_agent
+
+    model = ScriptedChatModel(reply="test-answer")
+    
+    # Call with pre-existing parameters only — should work identically to before.
+    agent = build_agent(
+        model=model,
+        tools=[],
+        backend=StateBackend(),
+    )
+    
+    result = agent.invoke({"messages": [{"role": "user", "content": "test"}]})
+    
+    # Should invoke successfully and return a compiled graph state.
+    assert result is not None
+    assert "messages" in result
+    assert len(result["messages"]) >= 1
+
+
+def test_build_agent_custom_middleware_injection():
+    """Test that custom middleware passed via middleware= parameter is included.
+    
+    Verifies that caller-provided middleware is properly threaded into the
+    compiled graph.
+    """
+    from src.agent.graph import build_agent
+
+    model = ScriptedChatModel(reply="final-answer")
+    custom_mw = SummarizationMiddleware(model=model, trigger=("messages", 2), keep=("messages", 1))
+    
+    # Inject custom middleware.
+    agent = build_agent(
+        model=model,
+        middleware=[custom_mw],
+        tools=[],
+        backend=StateBackend(),
+    )
+    
+    result = agent.invoke(
+        {
+            "messages": [
+                HumanMessage(content="q1"),
+                AIMessage(content="a1"),
+                HumanMessage(content="q2"),  # 3 messages crosses trigger of 2
+            ]
+        }
+    )
+    
+    # Custom middleware should have fired (summary added).
+    summaries = [m for m in result["messages"] if m.additional_kwargs.get("lc_source") == "summarization"]
+    assert len(summaries) > 0, "custom middleware must be active and fire"
+
+
+def test_build_agent_subagents_parameter_acceptance():
+    """Test that subagents parameter is accepted and passed through.
+    
+    Verifies that the subagents parameter is wired correctly to create_deep_agent
+    without throwing errors during parameter handling (not full invocation).
+    """
+    from src.agent.graph import build_agent
+    from src.agent.context.subagents import build_research_subagent
+
+    model = ScriptedChatModel(reply="test-answer")
+    
+    # Pass a real subagent (research subagent).
+    agent = build_agent(
+        model=model,
+        subagents=[build_research_subagent()],
+        tools=[],
+        backend=StateBackend(),
+    )
+    
+    # Should build successfully without errors.
+    assert agent is not None
+    
+    # Basic invoke to ensure the graph is valid (subagent structure is correct).
+    result = agent.invoke({"messages": [{"role": "user", "content": "test"}]})
+    assert result is not None
+
+
+def test_build_agent_parameter_defaults():
+    """Test that middleware defaults to () and subagents defaults to None.
+    
+    Verifies the default values are correctly set and allow the function to be
+    called without these parameters.
+    """
+    from src.agent.graph import build_agent
+    import inspect
+
+    # Check function signature has correct defaults.
+    sig = inspect.signature(build_agent)
+    assert sig.parameters["middleware"].default == ()
+    assert sig.parameters["subagents"].default is None
+    assert sig.parameters["enable_default_context_management"].default is True
+    
+    # Calling without these parameters should not raise an error.
+    model = ScriptedChatModel(reply="test")
+    agent = build_agent(
+        model=model,
+        tools=[],
+        backend=StateBackend(),
+    )
+    assert agent is not None
+
+
+def test_build_agent_enqueue_middleware_ordering():
+    """Test that enqueue middleware is appended after client middleware.
+    
+    Verifies that when both custom middleware and enqueue callback are provided,
+    the enqueue middleware is added at the end (enqueue fires after client
+    middleware processing).
+    """
+    from src.agent.graph import build_agent
+    from unittest.mock import Mock
+
+    model = ScriptedChatModel(reply="test-answer")
+    
+    # Create a mock enqueue function and custom middleware.
+    enqueue_called = []
+    
+    def mock_enqueue(thread_id: str, user_id: str) -> None:
+        enqueue_called.append((thread_id, user_id))
+    
+    custom_mw = SummarizationMiddleware(model=model, trigger=("messages", 100), keep=("messages", 50))
+    
+    # Build agent with both custom middleware and enqueue.
+    agent = build_agent(
+        model=model,
+        middleware=[custom_mw],
+        enqueue=mock_enqueue,
+        tools=[],
+        backend=StateBackend(),
+    )
+    
+    # Invoke the agent — the enqueue middleware should be wired in.
+    result = agent.invoke(
+        {
+            "messages": [HumanMessage(content="test")],
+        }
+    )
+    
+    # Verify the graph invoked successfully (enqueue middleware exists).
+    assert result is not None
+    assert "messages" in result

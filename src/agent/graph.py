@@ -89,6 +89,9 @@ def build_agent(
     tools: Sequence[BaseTool] = DEFAULT_TOOLS,
     context_schema: type[Any] = DEFAULT_CONTEXT_SCHEMA,
     enqueue: Callable[[str, str], None] | None = None,
+    subagents: Sequence[Any] | None = None,
+    middleware: Sequence[Any] = (),
+    enable_default_context_management: bool = True,
 ) -> CompiledStateGraph:
     """Build a compiled deep agent wired with the vertex-agent backend.
 
@@ -118,6 +121,17 @@ def build_agent(
             ``enqueue(thread_id, user_id)`` is called (via an ``after_agent``
             middleware, enqueue-only) after every agent turn finishes. ``None``
             (default) wires no middleware — behaviour identical to Task 5.
+        subagents: Optional sequence of subagents to inject into the compiled
+            graph. When ``None`` (default), no subagents are added. Task B will
+            implement automatic subagent initialization based on
+            ``enable_default_context_management``.
+        middleware: Optional sequence of custom middleware to inject into the
+            compiled graph. Client-provided middleware will be ordered before
+            any built-in middleware (enqueue, etc.). Defaults to empty.
+        enable_default_context_management: Flag controlling whether default
+            context management middleware (summarization, output limiting) is
+            enabled. Defaults to ``True``. Used in Task B for actual context
+            middleware wiring; has no effect in Task A.
 
     Returns:
         A compiled agent graph. Invoke with
@@ -128,9 +142,9 @@ def build_agent(
         system_prompt = build_system_prompt()
     if backend is None:
         backend = build_memory_filesystem()
-    middleware: list[Any] = []
+    built_middleware: list[Any] = list(middleware)
     if enqueue is not None:
-        middleware.append(EnqueueAfterTurnMiddleware(enqueue))
+        built_middleware.append(EnqueueAfterTurnMiddleware(enqueue))
     return create_deep_agent(
         model=model,
         tools=list(tools),
@@ -140,7 +154,8 @@ def build_agent(
         checkpointer=checkpointer,
         store=store,
         context_schema=context_schema,
-        middleware=middleware or None,
+        subagents=list(subagents) if subagents else None,
+        middleware=built_middleware or None,
     )
 
 
