@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Callable
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -34,7 +35,10 @@ from langgraph.store.base import BaseStore
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
 
+from src.agent.context.limit_output import LimitToolOutputMiddleware
+from src.agent.context.summarization import build_summarization_middleware
 from src.agent.tools import create_support_ticket, query_order
+from src.config.settings import get_settings
 from src.memory.dreaming.enqueue import EnqueueAfterTurnMiddleware
 from src.memory.memory_backend import (
     USER_CONTEXT_SCHEMA,
@@ -60,6 +64,70 @@ DEFAULT_CONTEXT_SCHEMA: type[UserContext] = USER_CONTEXT_SCHEMA
 
 #: Task 2 custom business tools added on top of the built-in tools.
 DEFAULT_TOOLS: tuple[BaseTool, ...] = (query_order, create_support_ticket)
+
+
+def _resolve_model_for_summarization(model: str | BaseChatModel) -> BaseChatModel:
+    """Resolve a model string or instance to a BaseChatModel for summarization.
+
+    Args:
+        model: Either a provider:model string (e.g., "openai:gpt-4o-mini") or
+            a BaseChatModel instance.
+
+    Returns:
+        A BaseChatModel instance suitable for use in SummarizationMiddleware.
+        If model is already a BaseChatModel, returns it unchanged. If model is
+        a string spec, resolves it via langchain's init_chat_model.
+    """
+    if isinstance(model, str):
+        return init_chat_model(model)
+    return model
+
+
+def _default_context_middleware(model: str | BaseChatModel) -> list[Any]:
+    """Build default context management middleware list.
+
+    Returns middleware for:
+    - Token-aware summarization (with trigger_tokens from settings)
+    - Tool output truncation (with max_length from settings)
+
+    Order: [summarization, limit-output] so both middleware can interact.
+
+    Args:
+        model: Chat model (string spec or BaseChatModel instance) used for
+            summarization.
+
+    Returns:
+        A list of middleware instances ready for create_deep_agent(middleware=[...]).
+    """
+    resolved = _resolve_model_for_summarization(model)
+    settings = get_settings()
+    return [
+        build_summarization_middleware(
+            resolved,
+            trigger=("tokens", settings.summarization_trigger_tokens),
+            keep=("messages", settings.summarization_keep_messages),
+        ),
+        LimitToolOutputMiddleware(
+            max_length=settings.tool_output_max_length,
+        ),
+    ]
+
+
+def _default_research_subagent() -> Any:
+    """Build default research subagent.
+
+    Returns a research subagent that can be used for long lookups/gathering
+    without polluting main agent context.
+
+    Imports here to avoid circular imports between graph.py and subagents.py.
+
+    Returns:
+        A subagent spec dict suitable for create_deep_agent(subagents=[...]).
+    """
+    # Import here to avoid circular imports
+    from src.agent.context.subagents import build_research_subagent
+
+    return build_research_subagent()
 
 
 def build_system_prompt(base: str | None = None) -> str:
@@ -142,9 +210,26 @@ def build_agent(
         system_prompt = build_system_prompt()
     if backend is None:
         backend = build_memory_filesystem()
-    built_middleware: list[Any] = list(middleware)
+
+    # Build subagents list: use default research subagent if not provided
+    resolved_subagents = list(subagents) if subagents is not None else [
+        _default_research_subagent()
+    ]
+
+    # Build middleware list: default context management comes first so caller can override
+    built_middleware: list[Any] = []
+
+    if enable_default_context_management:
+        # Add default context middleware (summarization + output limiting) first
+        built_middleware = _default_context_middleware(model)
+
+    # Append caller's custom middleware
+    built_middleware.extend(middleware)
+
+    # Append enqueue middleware if provided
     if enqueue is not None:
         built_middleware.append(EnqueueAfterTurnMiddleware(enqueue))
+
     return create_deep_agent(
         model=model,
         tools=list(tools),
@@ -154,7 +239,7 @@ def build_agent(
         checkpointer=checkpointer,
         store=store,
         context_schema=context_schema,
-        subagents=list(subagents) if subagents else None,
+        subagents=resolved_subagents or None,
         middleware=built_middleware or None,
     )
 
