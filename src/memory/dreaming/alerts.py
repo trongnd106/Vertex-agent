@@ -182,6 +182,28 @@ def check_health(
 # --------------------------------------------------------------------------- #
 # Real-data gathering + CLI                                                      #
 # --------------------------------------------------------------------------- #
+#: Page size used when enumerating dream artifacts from the Store. BaseStore's
+#: ``search`` defaults to a small ``limit`` (10) so we paginate explicitly to
+#: avoid treating threads whose dream artifacts fall past page 1 as undreamed
+#: (which would inflate the backlog and trigger false alerting).
+_SEARCH_PAGE_SIZE = 100
+
+
+def _search_map_items(store: BaseStore, namespace: tuple[str, ...]) -> list:
+    """Return every item in ``namespace``, paginating past ``search``'s limit."""
+    items: list = []
+    offset = 0
+    while True:
+        page = store.search(namespace, limit=_SEARCH_PAGE_SIZE, offset=offset)
+        if not page:
+            break
+        items.extend(page)
+        if len(page) < _SEARCH_PAGE_SIZE:
+            break
+        offset += _SEARCH_PAGE_SIZE
+    return items
+
+
 def discover_dreamed_threads(store: BaseStore) -> set[str]:
     """Threads that have at least one dream artifact in the Store.
 
@@ -192,7 +214,7 @@ def discover_dreamed_threads(store: BaseStore) -> set[str]:
     """
     dreamed: set[str] = set()
     for ns in [("memories",), LESSONS_NAMESPACE, CONFLICT_MARKERS_NAMESPACE]:
-        for item in store.search(ns):
+        for item in _search_map_items(store, ns):
             tid = item.value.get("thread_id")
             if isinstance(tid, str) and tid:
                 dreamed.add(tid)

@@ -169,3 +169,19 @@ def test_discover_dreamed_threads_from_store_artifacts():
               {"kind": "fact", "content": "z", "priority": 3})
 
     assert discover_dreamed_threads(store) == {"t-fact", "t-lesson"}
+
+
+def test_discover_dreamed_threads_exceeds_default_search_page_size():
+    from src.memory.dreaming.alerts import discover_dreamed_threads
+
+    # BaseStore.search defaults to limit=10, so seed >10 items in one namespace
+    # across many threads: if pagination regresses, threads with artifacts past
+    # page 1 are treated as undreamed and the backlog inflates.
+    store = InMemoryStore()
+    for i in range(15):
+        store.put(memories_namespace(f"u{i % 3}"), f"fact-{i}",
+                  {"kind": "fact", "content": f"c{i}", "thread_id": f"t-{i}", "priority": 3})
+    store.put(LESSONS_NAMESPACE, "lesson-k1",
+              {"kind": "lesson", "content": "y", "thread_id": "t-lesson"})
+
+    assert discover_dreamed_threads(store) == {f"t-{i}" for i in range(15)} | {"t-lesson"}
