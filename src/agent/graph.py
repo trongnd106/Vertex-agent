@@ -23,9 +23,9 @@ Layering notes (see `docs/phase-0-discovery.md`):
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Callable
 
-from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -35,10 +35,7 @@ from langgraph.store.base import BaseStore
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
 
-from src.agent.context.limit_output import LimitToolOutputMiddleware
-from src.agent.context.summarization import build_summarization_middleware
-from src.agent.tools import create_support_ticket, query_order
-from src.config.settings import get_settings
+from src.agent.system_prompt import build_system_prompt as _build_system_prompt
 from src.memory.dreaming.enqueue import EnqueueAfterTurnMiddleware
 from src.memory.memory_backend import (
     USER_CONTEXT_SCHEMA,
@@ -46,104 +43,33 @@ from src.memory.memory_backend import (
     build_memory_filesystem,
 )
 
-MEMORY_GUIDANCE = (
-    "LONG-TERM MEMORY: you have persistent cross-session memory stored as your "
-    "own file /memory/notes.md (it survives across all sessions and threads).\n"
-    "- At the START of a new session, read_file(\"/memory/notes.md\") first to "
-    "recall the user's remembered facts and preferences.\n"
-    "- During a session, whenever you learn an important, durable user fact or "
-    "preference, save it by calling write_file(\"/memory/notes.md\", <the full "
-    "accumulated notes, overwriting the previous content>).\n"
-    "- Keep notes concise and fact-based (names, preferences, constraints); "
-    "overwrite the whole file each time instead of appending duplicates."
-)
+from src.agent.system_prompt import MEMORY_GUIDANCE as _MEMORY_GUIDANCE
+
+# Re-export for backward compatibility
+MEMORY_GUIDANCE = _MEMORY_GUIDANCE
 
 #: Default user-context schema: enables per-user ``("memories", user_id)``
 #: namespaces (see ``src/memory/memory_backend`` for the probe verdict).
 DEFAULT_CONTEXT_SCHEMA: type[UserContext] = USER_CONTEXT_SCHEMA
 
-#: Task 2 custom business tools added on top of the built-in tools.
-DEFAULT_TOOLS: tuple[BaseTool, ...] = (query_order, create_support_ticket)
-
-
-def _resolve_model_for_summarization(model: str | BaseChatModel) -> BaseChatModel:
-    """Resolve a model string or instance to a BaseChatModel for summarization.
-
-    Args:
-        model: Either a provider:model string (e.g., "openai:gpt-4o-mini") or
-            a BaseChatModel instance.
-
-    Returns:
-        A BaseChatModel instance suitable for use in SummarizationMiddleware.
-        If model is already a BaseChatModel, returns it unchanged. If model is
-        a string spec, resolves it via langchain's init_chat_model.
-    """
-    if isinstance(model, str):
-        return init_chat_model(model)
-    return model
-
-
-def _default_context_middleware(model: str | BaseChatModel) -> list[Any]:
-    """Build default context management middleware list.
-
-    Returns middleware for:
-    - Token-aware summarization (with trigger_tokens from settings)
-    - Tool output truncation (with max_length from settings)
-
-    Order: [summarization, limit-output] so both middleware can interact.
-
-    Args:
-        model: Chat model (string spec or BaseChatModel instance) used for
-            summarization.
-
-    Returns:
-        A list of middleware instances ready for create_deep_agent(middleware=[...]).
-    """
-    resolved = _resolve_model_for_summarization(model)
-    settings = get_settings()
-    return [
-        build_summarization_middleware(
-            resolved,
-            trigger=("tokens", settings.summarization_trigger_tokens),
-            keep=("messages", settings.summarization_keep_messages),
-        ),
-        LimitToolOutputMiddleware(
-            max_length=settings.tool_output_max_length,
-        ),
-    ]
-
-
-def _default_research_subagent() -> Any:
-    """Build default research subagent.
-
-    Returns a research subagent that can be used for long lookups/gathering
-    without polluting main agent context.
-
-    Imports here to avoid circular imports between graph.py and subagents.py.
-
-    Returns:
-        A subagent spec dict suitable for create_deep_agent(subagents=[...]).
-    """
-    # Import here to avoid circular imports
-    from src.agent.context.subagents import build_research_subagent
-
-    return build_research_subagent()
+#: Custom business tools (empty by default — agent is general-purpose).
+DEFAULT_TOOLS: tuple[BaseTool, ...] = ()
 
 
 def build_system_prompt(base: str | None = None) -> str:
     """Return the agent system prompt, appending long-term-memory guidance.
 
+    Delegates to :func:`src.agent.system_prompt.build_system_prompt`.
+
     Args:
-        base: Optional deployment-specific opening instructions. When ``None``,
-            only the memory guidance is used.
+        base: Optional deployment-specific opening instructions treated as
+            ``system_message`` in the new prompt builder.
 
     Returns:
-        ``base`` followed by the memory guidance (blank-line separated) so the
-        agent both saves and recalls the user's long-term facts via
-        ``/memory/notes.md``.
+        The assembled system prompt with identity, guidance, skills index,
+        memory guidance, timestamp, and environment hints.
     """
-    parts = [part for part in (base, MEMORY_GUIDANCE) if part]
-    return "\n\n".join(parts)
+    return _build_system_prompt(system_message=base, show_env_hints=True)
 
 
 def build_agent(
@@ -157,9 +83,6 @@ def build_agent(
     tools: Sequence[BaseTool] = DEFAULT_TOOLS,
     context_schema: type[Any] = DEFAULT_CONTEXT_SCHEMA,
     enqueue: Callable[[str, str], None] | None = None,
-    subagents: Sequence[Any] | None = None,
-    middleware: Sequence[Any] = (),
-    enable_default_context_management: bool = True,
 ) -> CompiledStateGraph:
     """Build a compiled deep agent wired with the vertex-agent backend.
 
@@ -189,17 +112,6 @@ def build_agent(
             ``enqueue(thread_id, user_id)`` is called (via an ``after_agent``
             middleware, enqueue-only) after every agent turn finishes. ``None``
             (default) wires no middleware — behaviour identical to Task 5.
-        subagents: Optional sequence of subagents to inject into the compiled
-            graph. When ``None`` (default), no subagents are added. Task B will
-            implement automatic subagent initialization based on
-            ``enable_default_context_management``.
-        middleware: Optional sequence of custom middleware to inject into the
-            compiled graph. Client-provided middleware will be ordered before
-            any built-in middleware (enqueue, etc.). Defaults to empty.
-        enable_default_context_management: Flag controlling whether default
-            context management middleware (summarization, output limiting) is
-            enabled. Defaults to ``True``. Used in Task B for actual context
-            middleware wiring; has no effect in Task A.
 
     Returns:
         A compiled agent graph. Invoke with
@@ -210,37 +122,34 @@ def build_agent(
         system_prompt = build_system_prompt()
     if backend is None:
         backend = build_memory_filesystem()
-
-    # Build subagents list: use default research subagent if not provided
-    resolved_subagents = list(subagents) if subagents is not None else [
-        _default_research_subagent()
-    ]
-
-    # Build middleware list: default context management comes first so caller can override
-    built_middleware: list[Any] = []
-
-    if enable_default_context_management:
-        # Add default context middleware (summarization + output limiting) first
-        built_middleware = _default_context_middleware(model)
-
-    # Append caller's custom middleware
-    built_middleware.extend(middleware)
-
-    # Append enqueue middleware if provided
+    # Resolve all valid skills from the skills/ directory
+    # (loads every SKILL.md whose YAML frontmatter parses correctly)
+    skills_root = Path(__file__).resolve().parent.parent.parent / "skills"
+    resolved_skills: list[str] = []
+    if skills:
+        for s in skills:
+            p = Path(s)
+            if not p.is_absolute():
+                p = skills_root / s
+            if p.is_dir():
+                resolved_skills.append(str(p))
+            elif (skills_root / p).is_dir():
+                resolved_skills.append(str(skills_root / p))
+            else:
+                resolved_skills.append(s)
+    middleware: list[Any] = []
     if enqueue is not None:
-        built_middleware.append(EnqueueAfterTurnMiddleware(enqueue))
-
+        middleware.append(EnqueueAfterTurnMiddleware(enqueue))
     return create_deep_agent(
         model=model,
         tools=list(tools),
         system_prompt=system_prompt,
-        skills=list(skills),
+        skills=resolved_skills or ["/skills/"],
         backend=backend,
         checkpointer=checkpointer,
         store=store,
         context_schema=context_schema,
-        subagents=resolved_subagents or None,
-        middleware=built_middleware or None,
+        middleware=middleware or None,
     )
 
 
