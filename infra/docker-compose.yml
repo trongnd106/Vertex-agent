@@ -1,8 +1,5 @@
 services:
   postgres:
-    # Prefer pgvector for the semantic-search-capable long-term Store (Task 5).
-    # A plain postgres:16-alpine would also work for the checkpointer/Store if
-    # pgvector is not needed.
     image: pgvector/pgvector:pg16
     container_name: deepagents-postgres
     environment:
@@ -18,19 +15,68 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
 
-  # Optional: Redis for a Redis-backed checkpointer or as a job queue for the
-  # Dreaming graph (Task 6). Not required by default — uncomment when needed.
-  # redis:
-  #   image: redis:7-alpine
-  #   container_name: deepagents-redis
-  #   ports:
-  #     - "6379:6379"
-  #   healthcheck:
-  #     test: ["CMD", "redis-cli", "ping"]
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 10
+  redis:
+    image: redis:7-alpine
+    container_name: deepagents-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    profiles:
+      - with-redis
+      - production
+
+  agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: deepagents-agent
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    environment:
+      AGENT_MODEL: "${AGENT_MODEL:-openai:gpt-4o-mini}"
+      DATABASE_URL: "postgresql://deepagents:deepagents@postgres:5432/deepagents"
+      REDIS_URL: "redis://redis:6379/0"
+      LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"
+      LANGSMITH_API_KEY: "${LANGSMITH_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    profiles:
+      - production
 
 volumes:
   postgres_data:
