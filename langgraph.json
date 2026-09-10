@@ -4,8 +4,20 @@
     "agent": "./src/agent/server.py:graph"
   },
   "env": {
-    "AGENT_MODEL": "openai:gpt-4o-mini"
+    "AGENT_MODEL": "${AGENT_MODEL:-openai:gpt-4o-mini}",
+    "DATABASE_URL": "${DATABASE_URL:-postgresql://deepagents:deepagents@localhost:5432/deepagents}",
+    "REDIS_URL": "${REDIS_URL:-redis://localhost:6379/0}",
+    "LANGSMITH_TRACING": "${LANGSMITH_TRACING:-false}",
+    "LANGSMITH_ENDPOINT": "https://api.smith.langchain.com",
+    "LANGSMITH_PROJECT": "${LANGSMITH_PROJECT:-vertex-agent}"
   },
   "dependencies": ["."],
-  "checkpointer": "postgres"
+  "checkpointer": "postgres",
+  "store": {
+    "index": {
+      "embed": "openai:text-embedding-3-small",
+      "dims": 1536,
+      "fields": ["text"]
+    }
+  }
 }
