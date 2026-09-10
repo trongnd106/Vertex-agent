@@ -4,7 +4,7 @@ Executes multiple tool calls concurrently using a thread pool,
 with configurable worker limits, per-tool timeouts, error isolation,
 and streaming support.
 
-Inspired by chatbot-orchestrator's ``AgentExecutor``.
+Inspired by orchestrator's ``AgentExecutor``.
 """
 
 from __future__ import annotations

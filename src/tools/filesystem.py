@@ -4,7 +4,7 @@ Provides read/write/edit/delete/search operations on the filesystem with
 permission integration, large-result eviction, and interrupt support.
 
 Inspired by DeepAgents' ``middleware/filesystem.py`` and
-chatbot-orchestrator's file tool patterns.
+orchestrator's file tool patterns.
 
 Permission model:
     Each filesystem tool checks permissions via ``FilesystemPermission`` rules

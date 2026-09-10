@@ -1,7 +1,7 @@
 """Memory middleware — injects memory files (AGENTS.md, MEMORY.md, USER.md, IDENTITY.md)
 into the system prompt each turn with caching and progressive disclosure.
 
-Inspired by DeepAgents' ``MemoryMiddleware`` and the chatbot-orchestrator
+Inspired by DeepAgents' ``MemoryMiddleware`` and the orchestrator
 memory files pattern (USER.md, MEMORY.md, IDENTITY.md, AGENTS.md).
 """
 

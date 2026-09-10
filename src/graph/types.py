@@ -280,7 +280,7 @@ class StreamChunk:
     """A single chunk of streamed output.
 
     Mirrors the StreamChunk from ``src/streaming/chunks.py`` in the
-    chatbot-orchestrator streaming pipeline.
+    orchestrator streaming pipeline.
     """
 
     content: str | None = None
