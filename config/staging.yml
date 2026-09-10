@@ -1,0 +1,16 @@
+# Staging configuration
+environment: staging
+deployment:
+  server_host: "0.0.0.0"
+  server_port: 8000
+  log_level: INFO
+  max_concurrency: 10
+  workspace_dir: /app/workspace
+agent:
+  model: "anthropic:claude-sonnet-4-20250514"
+  max_iterations: 100
+  middleware: "security,tool_injection,summarization,progress,rubric"
+database:
+  url: "${DATABASE_URL}"
+  pool_size: 10
+  vector_dim: 1536

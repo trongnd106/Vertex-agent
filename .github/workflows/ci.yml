@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: deepagents
+          POSTGRES_PASSWORD: deepagents
+          POSTGRES_DB: deepagents
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready -U deepagents -d deepagents
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://deepagents:deepagents@localhost:5432/deepagents
+      DATABASE_URL: postgresql://deepagents:deepagents@localhost:5432/deepagents
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]"
+      - name: Wait for postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U deepagents; then
+              break
+            fi
+            sleep 1
+          done
+      - name: Run pytest
+        run: .venv/bin/python -m pytest tests/ -v
+      - name: Validate langgraph
+        run: .venv/bin/python -m langgraph validate
+      - name: Build docker image (optional drift check)
+        run: |
+          if command -v docker >/dev/null 2>&1; then
+            docker build -t vertex-agent:ci .
+          else
+            echo "Docker not available, skipping image build"
+          fi

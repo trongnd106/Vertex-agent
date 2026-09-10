@@ -1,0 +1,18 @@
+# Development configuration
+environment: dev
+deployment:
+  server_host: "0.0.0.0"
+  server_port: 8000
+  log_level: DEBUG
+  max_concurrency: 5
+  workspace_dir: ./workspace
+agent:
+  model: "openai:gpt-4o-mini"
+  max_iterations: 50
+  middleware: "security,tool_injection,summarization,progress"
+  tool_permissions:
+    execute: interrupt
+database:
+  url: "postgresql://deepagents:deepagents@localhost:5432/deepagents"
+  pool_size: 5
+  vector_dim: 1536
