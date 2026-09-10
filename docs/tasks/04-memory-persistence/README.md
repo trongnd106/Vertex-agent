@@ -1,6 +1,6 @@
 # Memory & Persistence
 
-> **Nguồn tham khảo:** LangGraph `checkpoint/` (BaseCheckpointSaver, Checkpoint), `store/` (BaseStore); DeepAgents `backends/store.py`, `middleware/memory.py`, `middleware/summarization.py`; chatbot-orchestrator MongoDB checkpointing + Store, memory files (AGENTS.md, MEMORY.md)
+> **Nguồn tham khảo:** LangGraph `checkpoint/` (BaseCheckpointSaver, Checkpoint), `store/` (BaseStore); DeepAgents `backends/store.py`, `middleware/memory.py`, `middleware/summarization.py`; orchestrator MongoDB checkpointing + Store, memory files (AGENTS.md, MEMORY.md)
 
 ## Mục tiêu
 
@@ -66,7 +66,7 @@ Xây dựng memory và persistence system: session checkpointing, long-term memo
 
 **File tham khảo:**
 - DeepAgents: `middleware/memory.py` (MemoryMiddleware)
-- chatbot-orchestrator: memory files pattern (USER.md, MEMORY.md, IDENTITY.md, AGENTS.md)
+- orchestrator: memory files pattern (USER.md, MEMORY.md, IDENTITY.md, AGENTS.md)
 
 **Yêu cầu:**
 - MemoryMiddleware: load memory files từ backend paths

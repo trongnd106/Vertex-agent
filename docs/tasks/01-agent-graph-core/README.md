@@ -1,6 +1,6 @@
 # Agent Graph Core
 
-> **Nguồn tham khảo:** LangGraph `pregel/main.py` (Pregel engine), `graph/state.py` (StateGraph builder), DeepAgents `graph.py` (create_deep_agent), chatbot-orchestrator `components/agent/deepagent/graph.py`
+> **Nguồn tham khảo:** LangGraph `pregel/main.py` (Pregel engine), `graph/state.py` (StateGraph builder), DeepAgents `graph.py` (create_deep_agent), orchestrator `components/agent/deepagent/graph.py`
 
 ## Mục tiêu
 
@@ -15,7 +15,7 @@ Xây dựng core graph engine cho agent dựa trên LangGraph Pregel Algorithm. 
 **File tham khảo:**
 - LangGraph: `/libs/langgraph/langgraph/graph/state.py` (StateGraph, CompiledStateGraph)
 - DeepAgents: `deepagents/graph.py` (DeepAgentState)
-- chatbot-orchestrator: `components/agent/deepagent/graph.py`
+- orchestrator: `components/agent/deepagent/graph.py`
 
 **Yêu cầu:**
 - Tạo `AgentState` schema với `Annotated[messages, add_messages]` cho conversation
@@ -86,7 +86,7 @@ Xây dựng core graph engine cho agent dựa trên LangGraph Pregel Algorithm. 
 
 **File tham khảo:**
 - LangGraph: `pregel/_retry.py`, `types.py` (RetryPolicy)
-- chatbot-orchestrator: `components/agent/deepagent/middleware/model_retry.py`, `tool_retry.py`
+- orchestrator: `components/agent/deepagent/middleware/model_retry.py`, `tool_retry.py`
 
 **Yêu cầu:**
 - Node-level error handlers (interceptor pattern)
@@ -106,7 +106,7 @@ Xây dựng core graph engine cho agent dựa trên LangGraph Pregel Algorithm. 
 - Graph visualization (Mermaid/Mermaid.js generation)
 - Debug mode: step-by-step execution trace
 - State inspector: xem channel values tại mọi checkpoint
-- Stream debug: collector + printer (như chatbot-orchestrator's StreamCollector)
+- Stream debug: collector + printer (như orchestrator's StreamCollector)
 
 ### Task 1.8: Subgraph Support
 
@@ -127,7 +127,7 @@ Xây dựng core graph engine cho agent dựa trên LangGraph Pregel Algorithm. 
 
 **File tham khảo:**
 - DeepAgents: `graph.py` (create_deep_agent assembly)
-- chatbot-orchestrator: `components/agent/deepagent/graph.py` (create_deep_agent_v12)
+- orchestrator: `components/agent/deepagent/graph.py` (create_deep_agent_v12)
 
 **Yêu cầu:**
 - DeepAgents middleware stack integration

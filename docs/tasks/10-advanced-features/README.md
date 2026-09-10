@@ -1,6 +1,6 @@
 # Advanced Features
 
-> **Nguồn tham khảo:** Vertex-agent `src/memory/dreaming/` (enqueue, scan, dream, consolidate); DeepAgents `middleware/rubric.py`; LangMem `reflection.py`; chatbot-orchestrator deep research agent patterns
+> **Nguồn tham khảo:** Vertex-agent `src/memory/dreaming/` (enqueue, scan, dream, consolidate); DeepAgents `middleware/rubric.py`; LangMem `reflection.py`; orchestrator deep research agent patterns
 
 ## Mục tiêu
 
@@ -88,7 +88,7 @@ Xây dựng advanced features: dreaming system, self-improvement, rubric evaluat
 **Mô tả:** Xây dựng Deep Research Agent pattern: multi-step research với web search, analysis, và synthesis.
 
 **File tham khảo:**
-- chatbot-orchestrator: AIQ Agent (Deep Researcher), subagent patterns
+- orchestrator: AIQ Agent (Deep Researcher), subagent patterns
 - DeepAgents: subagent systems
 
 **Yêu cầu:**
@@ -111,7 +111,7 @@ Xây dựng advanced features: dreaming system, self-improvement, rubric evaluat
 **File tham khảo:**
 - DeepAgents: `middleware/_video.py` (video frame extraction)
 - LangChain: multi-modal support patterns
-- chatbot-orchestrator: extension patterns
+- orchestrator: extension patterns
 
 **Yêu cầu:**
 - Image processing:

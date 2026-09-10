@@ -1,6 +1,6 @@
 # Subagent & Communication
 
-> **Nguồn tham khảo:** DeepAgents `middleware/subagents.py`, `middleware/async_subagents.py`; chatbot-orchestrator subagent patterns (SubAgent, CompiledSubAgent, AsyncSubAgent); LangGraph subgraph patterns + remote execution
+> **Nguồn tham khảo:** DeepAgents `middleware/subagents.py`, `middleware/async_subagents.py`; orchestrator subagent patterns (SubAgent, CompiledSubAgent, AsyncSubAgent); LangGraph subgraph patterns + remote execution
 
 ## Mục tiêu
 
@@ -14,7 +14,7 @@ Xây dựng hệ thống subagent communication cho phép agent spawning subagen
 
 **File tham khảo:**
 - DeepAgents: `middleware/subagents.py` (SubAgentMiddleware, SubAgent, CompiledSubAgent)
-- chatbot-orchestrator: subagent patterns
+- orchestrator: subagent patterns
 
 **Yêu cầu:**
 - SubAgent types:
@@ -50,7 +50,7 @@ Xây dựng hệ thống subagent communication cho phép agent spawning subagen
 **Mô tả:** Xây dựng communication protocol giữa các agents: message passing, events, và data sharing.
 
 **File tham khảo:**
-- chatbot-orchestrator: event system (EventToTriggerTask), message broker (Kafka/ActiveMQ)
+- orchestrator: event system (EventToTriggerTask), message broker (Kafka/ActiveMQ)
 - DeepAgents: subagent result patterns
 - LangGraph: Command(graph=Command.PARENT) for subgraph-parent communication
 
@@ -68,7 +68,7 @@ Xây dựng hệ thống subagent communication cho phép agent spawning subagen
 **Mô tả:** Implement parallel tool execution system: execute nhiều tool calls concurrently.
 
 **File tham khảo:**
-- chatbot-orchestrator: `task_manager.py`, AgentExecutor (`execute_agentexecutor_task`)
+- orchestrator: `task_manager.py`, AgentExecutor (`execute_agentexecutor_task`)
 - LangGraph: parallel execution patterns
 
 **Yêu cầu:**
@@ -86,7 +86,7 @@ Xây dựng hệ thống subagent communication cho phép agent spawning subagen
 
 **File tham khảo:**
 - DeepAgents: `profiles/harness/harness_profiles.py` (HarnessProfile for subagents)
-- chatbot-orchestrator: subagent config patterns
+- orchestrator: subagent config patterns
 
 **Yêu cầu:**
 - Subagent profiles: reusable subagent configurations

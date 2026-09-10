@@ -1,6 +1,6 @@
 # Streaming & Observability
 
-> **Nguồn tham khảo:** chatbot-orchestrator `streaming/` (chunks, transport, producers, formatters); LangGraph `stream/` (stream_channel, _mux, run_stream); DeepAgents streaming patterns; LangSmith tracing
+> **Nguồn tham khảo:** orchestrator `streaming/` (chunks, transport, producers, formatters); LangGraph `stream/` (stream_channel, _mux, run_stream); DeepAgents streaming patterns; LangSmith tracing
 
 ## Mục tiêu
 
@@ -13,7 +13,7 @@ Xây dựng streaming pipeline cho real-time agent output và observability syst
 **Mô tả:** Implement StreamChunk schema và các producers cho different LLM sources.
 
 **File tham khảo:**
-- chatbot-orchestrator: `streaming/chunks.py` (StreamChunk, ToolCallDelta, ToolResult)
+- orchestrator: `streaming/chunks.py` (StreamChunk, ToolCallDelta, ToolResult)
 - `streaming/producers/langgraph_agent.py` (LangGraphProducer)
 - LangGraph: `stream/stream_channel.py`, `stream/_types.py`
 
@@ -35,7 +35,7 @@ Xây dựng streaming pipeline cho real-time agent output và observability syst
 **Mô tả:** Implement transport layer: forward chunks từ producer tới formatter/gateway.
 
 **File tham khảo:**
-- chatbot-orchestrator: `streaming/transport.py` (StreamTransport), `streaming/retry.py` (RetryPolicy), `streaming/cancellation.py` (CancelToken)
+- orchestrator: `streaming/transport.py` (StreamTransport), `streaming/retry.py` (RetryPolicy), `streaming/cancellation.py` (CancelToken)
 
 **Yêu cầu:**
 - StreamTransport: forward chunks với retry
@@ -55,7 +55,7 @@ Xây dựng streaming pipeline cho real-time agent output và observability syst
 **Mô tả:** Implement formatters: convert StreamChunks sang output formats.
 
 **File tham khảo:**
-- chatbot-orchestrator: `streaming/formatters/` (chatbox.py, openai.py, claude.py, base.py, factory.py)
+- orchestrator: `streaming/formatters/` (chatbox.py, openai.py, claude.py, base.py, factory.py)
 
 **Yêu cầu:**
 - StreamFormatter base class
@@ -77,7 +77,7 @@ Xây dựng streaming pipeline cho real-time agent output và observability syst
 **File tham khảo:**
 - Vertex-agent: `docs/runbook-observability.md` (LangSmith tracing)
 - LangSmith: LangChainTracer, tracing_v2_enabled
-- chatbot-orchestrator: Langfuse integration
+- orchestrator: Langfuse integration
 - LangGraph: callbacks, debug mode
 
 **Yêu cầu:**
@@ -98,7 +98,7 @@ Xây dựng streaming pipeline cho real-time agent output và observability syst
 **Mô tả:** Xây dựng gateway integration cho real-time UI communication.
 
 **File tham khảo:**
-- chatbot-orchestrator: Gateway pattern (POST /api/receive-stream-v2)
+- orchestrator: Gateway pattern (POST /api/receive-stream-v2)
 - `stream/gw_stream.py` (ChatboxGateway)
 
 **Yêu cầu:**

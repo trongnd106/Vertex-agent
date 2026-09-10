@@ -1,6 +1,6 @@
 # Agent Tasks - Tất cả Task Chi Tiết
 
-> **Mục đích:** Tạo một agent mạnh mẽ dựa trên source code LangGraph + DeepAgents + kiến trúc từ chatbot-orchestrator.
+> **Mục đích:** Tạo một agent mạnh mẽ dựa trên source code LangGraph + DeepAgents + kiến trúc từ orchestrator.
 >
 > **Phạm vi:** Xây dựng agent backend hoàn chỉnh với graph orchestration, middleware stack, tool system, memory management, streaming, và production deployment.
 >
@@ -28,7 +28,7 @@ docs/tasks/
 | STT | Task | File | Mục tiêu |
 |-----|------|------|----------|
 | 1 | [Agent Graph Core](./01-agent-graph-core/README.md) | 9 subtasks | Xây dựng core graph engine dựa trên LangGraph Pregel |
-| 2 | [Middleware Stack](./02-middleware-stack/README.md) | 7 subtasks | Xây dựng middleware pipeline theo pattern của chatbot-orchestrator |
+| 2 | [Middleware Stack](./02-middleware-stack/README.md) | 7 subtasks | Xây dựng middleware pipeline theo pattern của orchestrator |
 | 3 | [Tool System](./03-tool-system/README.md) | 6 subtasks | Tool management, MCP integration, sandbox |
 | 4 | [Memory & Persistence](./04-memory-persistence/README.md) | 6 subtasks | Checkpointing, long-term memory, dreaming |
 | 5 | [Subagent & Communication](./05-subagent-communication/README.md) | 5 subtasks | Subagent patterns, async communication, MCP |

@@ -1,6 +1,6 @@
-# Phan Tich Kien Truc Agent System - chatbot-orchestrator
+# Phan Tich Kien Truc Agent System - orchestrator
 
-**Nguon:** `/home/trongnd/Documents/chatbot-orchestrator/agent-system-report.md`
+**Nguon:** `/home/trongnd/Documents/orchestrator/agent-system-report.md`
 **Phan tich boi:** Vertex Agent Research
 **Ngay:** 2026-09-09
 
@@ -316,7 +316,7 @@ User -> API -> TaskEngine -> Registry -> Handler -> Agent Runtime
 ## 7. File Structure Overview
 
 ```
-chatbot-orchestrator/
+orchestrator/
 ├── orchestrator.py              # FastAPI server
 ├── task_engine.py               # Core engine (~2200 dong)
 ├── models.py                    # 22 task types
@@ -369,4 +369,4 @@ chatbot-orchestrator/
 
 ---
 
-*Tai lieu tham khao:* `/home/trongnd/Documents/chatbot-orchestrator/agent-system-report.md`
+*Tai lieu tham khao:* `/home/trongnd/Documents/orchestrator/agent-system-report.md`

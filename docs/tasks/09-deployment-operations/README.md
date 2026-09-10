@@ -1,6 +1,6 @@
 # Deployment & Operations
 
-> **Nguồn tham khảo:** LangGraph CLI (`langgraph-cli`), `langgraph.json` config; Vertex-agent `Dockerfile`, `src/agent/server.py`, `infra/docker-compose.yml`; chatbot-orchestrator `orchestrator.py` (FastAPI server)
+> **Nguồn tham khảo:** LangGraph CLI (`langgraph-cli`), `langgraph.json` config; Vertex-agent `Dockerfile`, `src/agent/server.py`, `infra/docker-compose.yml`; orchestrator `orchestrator.py` (FastAPI server)
 
 ## Mục tiêu
 
@@ -56,7 +56,7 @@ Xây dựng deployment và operations: Docker containerization, LangGraph server
 **Mô tả:** Xây dựng API layer cho agent communication.
 
 **File tham khảo:**
-- chatbot-orchestrator: `orchestrator.py` (FastAPI server, endpoints)
+- orchestrator: `orchestrator.py` (FastAPI server, endpoints)
 - Vertex-agent: `src/api/` (load_test.py, rate_limit.py)
 
 **Yêu cầu:**
@@ -106,7 +106,7 @@ Xây dựng deployment và operations: Docker containerization, LangGraph server
 
 **File tham khảo:**
 - Vertex-agent: `docs/runbook-observability.md`, `docs/runbook-operations.md`
-- chatbot-orchestrator: observability patterns
+- orchestrator: observability patterns
 
 **Yêu cầu:**
 - Deployment guide:

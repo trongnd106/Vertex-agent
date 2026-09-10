@@ -1,6 +1,6 @@
 # Middleware Stack
 
-> **Nguồn tham khảo:** DeepAgents `middleware/` (15 modules), chatbot-orchestrator `components/agent/deepagent/middleware/` (15+ modules), LangChain `agents/middleware/types.py` (AgentMiddleware abstraction)
+> **Nguồn tham khảo:** DeepAgents `middleware/` (15 modules), orchestrator `components/agent/deepagent/middleware/` (15+ modules), LangChain `agents/middleware/types.py` (AgentMiddleware abstraction)
 
 ## Mục tiêu
 
@@ -37,7 +37,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 
 **File tham khảo:**
 - DeepAgents: `graph.py` middleware assembly logic (~line 800-900)
-- chatbot-orchestrator: `components/agent/deepagent/graph.py` middleware stack ordering
+- orchestrator: `components/agent/deepagent/graph.py` middleware stack ordering
 
 **Yêu cầu:**
 - Middleware stack assembly với 3 segment:
@@ -55,7 +55,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 
 **File tham khảo:**
 - DeepAgents: `middleware/summarization.py`
-- chatbot-orchestrator: `components/agent/deepagent/middleware/summarization.py`
+- orchestrator: `components/agent/deepagent/middleware/summarization.py`
 
 **Yêu cầu:**
 - Trigger modes: `fraction` (tỷ lệ context window), `absolute` (số token cụ thể), `messages` (số message)
@@ -72,7 +72,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 
 **File tham khảo:**
 - DeepAgents: `middleware/rubric.py`
-- chatbot-orchestrator: rubric-like patterns
+- orchestrator: rubric-like patterns
 
 **Yêu cầu:**
 - Define rubric với các criteria (identity/critical/simple)
@@ -88,7 +88,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 
 **File tham khảo:**
 - DeepAgents: `middleware/patch_tool_calls.py`, `middleware/permissions.py`, `middleware/_tool_exclusion.py`
-- chatbot-orchestrator: `components/agent/deepagent/middleware/tooling.py`, `tool_call_limit.py`, `tool_selection.py`
+- orchestrator: `components/agent/deepagent/middleware/tooling.py`, `tool_call_limit.py`, `tool_selection.py`
 
 **Yêu cầu:**
 - **PatchToolCallsMiddleware**: sửa lỗi JSON, thêm fields thiếu, batch fix
@@ -103,7 +103,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 **Mô tả:** Xây dựng middleware cho progress tracking và streaming state updates.
 
 **File tham khảo:**
-- chatbot-orchestrator: `components/agent/deepagent/middleware/first_middleware.py`, `agent_current_state.py`, `todo.py`, `last_middleware.py`
+- orchestrator: `components/agent/deepagent/middleware/first_middleware.py`, `agent_current_state.py`, `todo.py`, `last_middleware.py`
 
 **Yêu cầu:**
 - **FirstMiddleware**: gửi thông điệp khởi tạo, set session markers
@@ -118,7 +118,7 @@ Xây dựng middleware pipeline theo Chain-of-Responsibility pattern. Middleware
 **Mô tả:** Xây dựng middleware cho PII redaction và security checks.
 
 **File tham khảo:**
-- chatbot-orchestrator: `components/agent/deepagent/middleware/pii.py`, `pia.py`
+- orchestrator: `components/agent/deepagent/middleware/pii.py`, `pia.py`
 - DeepAgents: `backends/local_shell.py` security warnings
 
 **Yêu cầu:**

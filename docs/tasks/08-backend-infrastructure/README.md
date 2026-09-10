@@ -1,6 +1,6 @@
 # Backend & Storage
 
-> **Nguồn tham khảo:** DeepAgents `backends/` (protocol.py, state.py, filesystem.py, store.py, composite.py, sandbox.py, local_shell.py); LangGraph `store/` (BaseStore), `checkpoint/` (BaseCheckpointSaver); chatbot-orchestrator session state backends (Redis, HTTP, InMem)
+> **Nguồn tham khảo:** DeepAgents `backends/` (protocol.py, state.py, filesystem.py, store.py, composite.py, sandbox.py, local_shell.py); LangGraph `store/` (BaseStore), `checkpoint/` (BaseCheckpointSaver); orchestrator session state backends (Redis, HTTP, InMem)
 
 ## Mục tiêu
 
@@ -36,7 +36,7 @@ Xây dựng backend infrastructure: pluggable storage backends, session state, c
 **Mô tả:** Implement session state quản lý: lưu trữ state per session.
 
 **File tham khảo:**
-- chatbot-orchestrator: `session_state_*.py` (SessionStateInMem, SessionStateRedis, SessionStateHTTP)
+- orchestrator: `session_state_*.py` (SessionStateInMem, SessionStateRedis, SessionStateHTTP)
 - `task_engine.py` variable management (plan/bot/sys scopes)
 
 **Yêu cầu:**
@@ -60,7 +60,7 @@ Xây dựng backend infrastructure: pluggable storage backends, session state, c
 
 **File tham khảo:**
 - Vertex-agent: `src/config/__init__.py`, `pyproject.toml`, `langgraph.json`
-- chatbot-orchestrator: `config.py`
+- orchestrator: `config.py`
 - DeepAgents: profiles system
 
 **Yêu cầu:**

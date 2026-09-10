@@ -1,6 +1,6 @@
 # Tool System
 
-> **Nguồn tham khảo:** DeepAgents `middleware/filesystem.py`, `middleware/subagents.py`, `backends/sandbox.py`; LangGraph `prebuilt/tool_node.py`; chatbot-orchestrator tool management (`utils.py`, MCP tools, tool categories)
+> **Nguồn tham khảo:** DeepAgents `middleware/filesystem.py`, `middleware/subagents.py`, `backends/sandbox.py`; LangGraph `prebuilt/tool_node.py`; orchestrator tool management (`utils.py`, MCP tools, tool categories)
 
 ## Mục tiêu
 
@@ -34,7 +34,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 **Mô tả:** Implement custom tools cho business logic (tool calling, tool chaining).
 
 **File tham khảo:**
-- chatbot-orchestrator: `utils.py` tool handling, tool categories (task, plan, mcpserver, code_interpreter, ragflow_tool)
+- orchestrator: `utils.py` tool handling, tool categories (task, plan, mcpserver, code_interpreter, ragflow_tool)
 - DeepAgents: `_tools.py` tool overrides
 
 **Yêu cầu:**
@@ -42,7 +42,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 - Tool chaining: kết quả tool này là input tool khác
 - Tool timeout: per-tool timeout configuration
 - Tool retry: retry với exponential backoff
-- Tool categories như chatbot-orchestrator:
+- Tool categories như orchestrator:
   - Task tool: gọi task definition
   - Plan tool: gọi plan từ bot khác
   - Code interpreter: Python sandbox
@@ -53,7 +53,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 **Mô tả:** Tích hợp MCP (Model Context Protocol) tools vào agent system.
 
 **File tham khảo:**
-- chatbot-orchestrator: MCP tool flow (`litellm_proxy_get_mcp_tool_meta`, `litellm_proxy_call_mcp`)
+- orchestrator: MCP tool flow (`litellm_proxy_get_mcp_tool_meta`, `litellm_proxy_call_mcp`)
 - DeepAgents: langchain-mcp-adapters integration
 - LangGraph MCP adapters
 
@@ -72,7 +72,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 
 **File tham khảo:**
 - DeepAgents: `backends/sandbox.py` (BaseSandbox), `backends/local_shell.py` (LocalShellBackend), `backends/langsmith.py` (LangSmithSandbox)
-- chatbot-orchestrator: `python_executor.py`, `components/agent/deepagent/aio_sandbox.py`
+- orchestrator: `python_executor.py`, `components/agent/deepagent/aio_sandbox.py`
 
 **Yêu cầu:**
 - BaseSandbox ABC: `execute`, `upload_files`, `download_files`, `id`
@@ -90,7 +90,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 
 **File tham khảo:**
 - DeepAgents: `middleware/permissions.py`, `middleware/filesystem.py` FilesystemPermission
-- chatbot-orchestrator: security patterns
+- orchestrator: security patterns
 
 **Yêu cầu:**
 - FilesystemPermission: `operations=["read","write"]`, `paths` (glob patterns), `mode="allow"|"deny"|"interrupt"`
@@ -107,7 +107,7 @@ Xây dựng tool management system hoàn chỉnh: built-in tools, custom tools, 
 
 **File tham khảo:**
 - DeepAgents: `profiles/harness/harness_profiles.py` tool_description_overrides
-- chatbot-orchestrator: `components/agent/deepagent/middleware/tool_selection.py`
+- orchestrator: `components/agent/deepagent/middleware/tool_selection.py`
 
 **Yêu cầu:**
 - Tool description overrides: mô tả tool ngắn gọn, rõ ràng cho LLM

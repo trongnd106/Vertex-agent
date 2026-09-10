@@ -1,6 +1,6 @@
 # Routing & Control Flow
 
-> **Nguồn tham khảo:** LangGraph `graph/_branch.py` (BranchSpec), `graph/state.py` (StateGraph edges), `types.py` (Send, Command, Interrupt); chatbot-orchestrator `task_engine.py` (dispatch flow, event handling)
+> **Nguồn tham khảo:** LangGraph `graph/_branch.py` (BranchSpec), `graph/state.py` (StateGraph edges), `types.py` (Send, Command, Interrupt); orchestrator `task_engine.py` (dispatch flow, event handling)
 
 ## Mục tiêu
 
@@ -48,7 +48,7 @@ Xây dựng routing và control flow system: conditional routing, loops, human-i
 **File tham khảo:**
 - LangGraph: `types.py` (Interrupt), `graph/state.py` interrupt handling, `pregel/main.py` resume logic
 - DeepAgents: HumanInTheLoopMiddleware, FilesystemMiddleware interrupt mode
-- chatbot-orchestrator: Headless Tools Middleware (`ask_user_input_v0`), interrupt patterns
+- orchestrator: Headless Tools Middleware (`ask_user_input_v0`), interrupt patterns
 
 **Yêu cầu:**
 - Interrupt mechanism: `interrupt(value)` -> pause execution, save checkpoint
@@ -64,7 +64,7 @@ Xây dựng routing và control flow system: conditional routing, loops, human-i
 **Mô tả:** Xây dựng task dispatch system và workflow engine cho multi-step tasks.
 
 **File tham khảo:**
-- chatbot-orchestrator: `task_engine.py` (TaskEngine), `core/registry.py` (HandlerRegistry), `core/handler.py` (BaseHandler)
+- orchestrator: `task_engine.py` (TaskEngine), `core/registry.py` (HandlerRegistry), `core/handler.py` (BaseHandler)
 
 **Yêu cầu:**
 - Task definition: task schema với kind, backend, version
@@ -82,7 +82,7 @@ Xây dựng routing và control flow system: conditional routing, loops, human-i
 **Mô tả:** Implement event system và centralized error handling.
 
 **File tham khảo:**
-- chatbot-orchestrator: event system (EventToTriggerTask, OrchestratorEvent), `task_engine.py` error handling
+- orchestrator: event system (EventToTriggerTask, OrchestratorEvent), `task_engine.py` error handling
 - LangGraph: error types, error handler interceptor
 
 **Yêu cầu:**
