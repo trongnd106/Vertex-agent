@@ -7,7 +7,7 @@ Provides security-focused middleware:
 - ``SecurityMiddleware`` — input validation, injection prevention
 - ``AuditMiddleware`` — audit logging for every tool execution
 
-Inspired by chatbot-orchestrator's ``pii.py``, ``pia.py`` and DeepAgents'
+Inspired by orchestrator's ``pii.py``, ``pia.py`` and DeepAgents'
 security patterns.
 """
 

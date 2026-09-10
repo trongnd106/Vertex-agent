@@ -11,7 +11,7 @@ agent lifecycle:
 - ``ToolSelectionMiddleware`` — filter tools based on context
 
 Inspired by DeepAgents' ``patch_tool_calls.py``, ``permissions.py``,
-``_tool_exclusion.py``, and chatbot-orchestrator's tooling pipeline.
+``_tool_exclusion.py``, and orchestrator's tooling pipeline.
 """
 
 from __future__ import annotations

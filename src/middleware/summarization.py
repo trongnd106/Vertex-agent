@@ -5,7 +5,7 @@ absolute token count, or message count).  Keeps a window of recent messages
 and offloads older history.
 
 Inspired by DeepAgents' ``middleware/summarization.py`` and
-chatbot-orchestrator's summarization patterns.
+orchestrator's summarization patterns.
 """
 
 from __future__ import annotations

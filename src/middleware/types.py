@@ -3,7 +3,7 @@
 Defines the base ``AgentMiddleware`` abstract class with lifecycle hooks,
 ``MiddlewareConfig`` for runtime configuration, and supporting types.
 Inspired by DeepAgents' ``middleware/__init__.py``, LangChain's
-``AgentMiddleware`` abstraction, and chatbot-orchestrator's middleware stack.
+``AgentMiddleware`` abstraction, and orchestrator's middleware stack.
 
 Middleware ordering follows the Chain-of-Responsibility pattern::
 

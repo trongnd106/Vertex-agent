@@ -8,7 +8,7 @@ Provides middleware for the streaming pipeline:
 - ``ProgressMiddleware`` — emits progress events through the streaming pipeline
 - ``LastMiddleware`` — finalises the stream, sends completion messages
 
-Inspired by chatbot-orchestrator's ``first_middleware.py``,
+Inspired by orchestrator's ``first_middleware.py``,
 ``agent_current_state.py``, ``todo.py``, and ``last_middleware.py``.
 """
 

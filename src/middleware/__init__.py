@@ -2,7 +2,7 @@
 
 Provides a pluggable middleware stack that intercepts agent lifecycle
 events: before/after agent execution, model calls, tool execution, and
-more.  Based on DeepAgents' middleware architecture and chatbot-orchestrator's
+more.  Based on DeepAgents' middleware architecture and orchestrator's
 middleware pipeline.
 
 ## Package Structure

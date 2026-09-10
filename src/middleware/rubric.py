@@ -3,7 +3,7 @@
 Provides a self-evaluation loop where agent output is graded against a rubric,
 and if it fails, feedback is sent back to the agent for revision.
 
-Inspired by DeepAgents' ``middleware/rubric.py`` and chatbot-orchestrator's
+Inspired by DeepAgents' ``middleware/rubric.py`` and orchestrator's
 quality evaluation patterns.
 """
 
