@@ -24,6 +24,7 @@ the plan's own dream graph.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -221,6 +222,7 @@ def build_dream_agent(
     store: BaseStore,
     checkpointer: BaseCheckpointSaver,
     extractor: Any | None = None,
+    get_state: Callable[[dict], Any] | None = None,
 ) -> CompiledStateGraph:
     """Build the standalone dreaming graph.
 
@@ -240,6 +242,9 @@ def build_dream_agent(
         extractor: Optional override Runnable for `with_structured_output`
             (advanced/testing seam). Defaults to
             ``model.with_structured_output(DreamOutput)``.
+        get_state: Optional ``agent.get_state(config)`` callable. When
+            provided, ``load_thread_messages`` uses the agent's full state
+            API to reconstruct messages (handles deepagents reducers).
 
     Returns:
         A compiled graph. Invoke with ``{"thread_id": ..., "user_id": ...}``.
@@ -253,7 +258,7 @@ def build_dream_agent(
         user_id = state.get("user_id")
         if not thread_id:
             return {"error": "thread_id is required", **state, "facts": [], "lessons": [], "conflicts": []}
-        messages = load_thread_messages(checkpointer, thread_id)
+        messages = load_thread_messages(checkpointer, thread_id, get_state=get_state)
         if not messages:
             return {
                 "facts": [],

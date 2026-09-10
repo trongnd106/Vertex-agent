@@ -1,14 +1,84 @@
-"""Session + long-term memory for the vertex-agent backend.
+"""Memory & Persistence system.
 
-- ``src.memory.checkpointer`` (Task 4): short-term session memory via a
-  LangGraph checkpointer (``MemorySaver`` dev / ``PostgresSaver`` production).
-- ``src.memory.cleanup`` (Task 4): stale-thread cleanup job / CLI.
-- ``src.memory.store`` (Task 5): long-term memory Store factory (``InMemoryStore``
-  dev / ``PostgresStore`` production, optional pgvector index).
-- ``src.memory.memory_backend`` (Task 5): the agent filesystem backend that
-  mounts ``/memory/`` on the Store — per-user namespaces via the Runtime
-  context (``UserContext``), skills stay on disk.
-
-``__init__`` stays import-free so ``python -m src.memory.cleanup`` does not
-trigger a runpy "found in sys.modules" RuntimeWarning.
+Provides checkpoint-based short-term memory, long-term store,
+memory middleware, namespace management, and a dreaming system
+for background self-improvement.
 """
+
+from src.memory.backend import (
+    CompositeBackend,
+    NamespaceFactory,
+    StoreBackend,
+    UserContext,
+)
+from src.memory.checkpoint import (
+    BaseCheckpointSaver,
+    Checkpoint,
+    CheckpointMetadata,
+    InMemorySaver,
+    PendingWrite,
+    TimeTravel,
+    TimeTravelResult,
+)
+# Dreaming system is a separate sub-package — import from src.memory.dreaming directly
+from src.memory.memory_middleware import (
+    DEFAULT_MEMORY_FILES,
+    MemoryFile,
+    MemoryMiddleware,
+    strip_html_comments,
+)
+from src.memory.namespace import (
+    NamespaceManager,
+    NamespaceResolver,
+    NamespaceRule,
+    bot_user_namespace,
+    global_namespace,
+    user_namespace,
+)
+from src.memory.store import (
+    BaseStore,
+    InMemoryStore,
+    Item,
+    PostgresStore,
+    SearchResult,
+    StoreFilter,
+    get_store,
+    close_store,
+)
+
+__all__ = [
+    # Checkpoint
+    "BaseCheckpointSaver",
+    "Checkpoint",
+    "CheckpointMetadata",
+    "InMemorySaver",
+    "PendingWrite",
+    "TimeTravel",
+    "TimeTravelResult",
+    # Store
+    "BaseStore",
+    "InMemoryStore",
+    "Item",
+    "PostgresStore",
+    "SearchResult",
+    "StoreFilter",
+    # Backend
+    "CompositeBackend",
+    "NamespaceFactory",
+    "StoreBackend",
+    "UserContext",
+    # Memory middleware
+    "DEFAULT_MEMORY_FILES",
+    "MemoryFile",
+    "MemoryMiddleware",
+    "strip_html_comments",
+    # Namespace
+    "NamespaceManager",
+    "NamespaceResolver",
+    "NamespaceRule",
+    "bot_user_namespace",
+    "global_namespace",
+    "user_namespace",
+    "get_store",
+    "close_store",
+    ]

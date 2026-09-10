@@ -235,7 +235,7 @@ def _open_checkpointer(db_url: str | None) -> BaseCheckpointSaver:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alerts", description=__doc__)
-    parser.add_argument("--db-url", default=None, help="Postgres URL; defaults to DATABASE_URL env.")
+    parser.add_argument("--db-url", default=None, help=f"Postgres URL; defaults to DATABASE_URL env or {config.DATABASE_URL!r}.")
     parser.add_argument(
         "--heartbeat-file",
         default=None,

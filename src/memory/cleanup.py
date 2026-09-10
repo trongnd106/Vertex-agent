@@ -34,8 +34,9 @@ deletes on the same three tables via the supplied connection.
 from __future__ import annotations
 
 import argparse
-import os
 from collections.abc import Sequence
+
+from src.config import config
 
 import psycopg
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -132,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    url = args.database_url or os.environ.get("DATABASE_URL")
+    url = args.database_url or config.DATABASE_URL
     if not url:
         parser.error("DATABASE_URL is required (or pass --database-url).")
 

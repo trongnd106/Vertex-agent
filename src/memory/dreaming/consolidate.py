@@ -244,7 +244,7 @@ def run_consolidation(
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint: ``python -m src.memory.dreaming.consolidate``."""
     parser = argparse.ArgumentParser(prog="consolidate", description=__doc__)
-    parser.add_argument("--db-url", default=None, help="Postgres URL; defaults to DATABASE_URL env. Omit for in-memory.")
+    parser.add_argument("--db-url", default=None, help=f"Postgres URL; defaults to DATABASE_URL env or {config.DATABASE_URL!r}. Omit for in-memory.")
     parser.add_argument("--user", action="append", default=None, help="user_id(s) to consolidate; defaults to every user found.")
     parser.add_argument("--stale-after-days", type=int, default=30, help="Aging window (default 30).")
     parser.add_argument(
@@ -282,17 +282,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _open_store(db_url: str | None) -> BaseStore:
-    # get_store() returns a ready-to-use PostgresStore (owned connection) when a
-    # URL is available, else an InMemoryStore.
     from src.memory.store import get_store
 
     return get_store(db_url)
 
 
 def _close_store(store: BaseStore) -> None:
-    conn = getattr(store, "conn", None)
-    if conn is not None:
-        conn.close()
+    from src.memory.store import close_store
+
+    close_store(store)
 
 
 def _namespaces_to_consolidate(store: BaseStore, users: list[str] | None) -> list[tuple[str, ...]]:

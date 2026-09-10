@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 
 import psycopg
+
+from src.config import config
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from psycopg.rows import dict_row
 from langgraph.checkpoint.memory import MemorySaver
@@ -79,7 +81,7 @@ def get_checkpointer(database_url: str | None = None) -> BaseCheckpointSaver:
         A ``MemorySaver`` (dev) or an entered, schema-set-up ``PostgresSaver``
         (production).
     """
-    url = database_url or os.environ.get("DATABASE_URL")
+    url = database_url or config.DATABASE_URL
     if url:
         return _build_postgres_saver(url)
     return MemorySaver()

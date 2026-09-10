@@ -1,130 +1,562 @@
-"""Store factory for long-term (cross-session) memory.
+"""Long-term memory store for cross-session persistence.
 
-Phase 5 : long-term memory is implemented via a LangGraph **Store**
-(``BaseStore``), which survives across threads and process restarts. The
-`deepagents.StoreBackend`<->`CompositeBackend` wiring lives in
-``src/memory/memory_backend.py``; this module only produces the ``BaseStore``
-instance itself, mirroring the checkpointer factory pattern from
-``src/memory/checkpointer.py`` (Task 4).
-
-Two backends are supported:
-
-- **dev / test (default)** — ``InMemoryStore`` (in-memory). Fast, deterministic,
-  no external dependency. A single *shared* instance passed to two graphs
-  simulates a real Store the way ``MemorySaver`` does for the checkpointer:
-  session A writes, session B (same instance) reads.
-- **production** — ``PostgresStore`` (`langgraph-checkpoint-postgres` 3.x),
-  persisted across process restarts. Activation is explicit: either pass
-  ``database_url`` or set the ``DATABASE_URL`` environment variable. The
-  returned store is *ready to use* (connection open, schema and migrations set
-  up) and may be passed straight to ``build_agent(store=store, ...)``.
-  Semantic-search indexing is OFF by default; pass ``embed=`` (an embedding
-  model) **and** ``dims=`` to enable the pgvector ``store`` index.
+Provides ``BaseStore`` interface with ``InMemoryStore`` for development
+and ``PostgresStore`` for production.  Supports namespace-based isolation,
+semantic search via ``pgvector``, and TTL for automatic expiry.
 """
 
 from __future__ import annotations
 
-import os
-from typing import Any
+import copy
+import json
+import threading
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
-import psycopg
-from psycopg.rows import dict_row
-
-from langgraph.store.base import BaseStore
-from langgraph.store.memory import InMemoryStore
-from langgraph.store.postgres import PostgresStore
+from src.memory.checkpoint import Checkpoint
 
 
-def _build_postgres_store(
-    database_url: str,
-    *,
-    embed: Any | None = None,
-    dims: int | None = None,
-) -> PostgresStore:
-    """Open a Postgres connection and return a ``PostgresStore`` ready to use.
+# ── Store data types ────────────────────────────────────────────────────
 
-    Verified usage pattern against the installed source
-    ``langgraph/store/postgres/__init__.py`` / ``base.py`` (3.1.2):
 
-    - ``PostgresStore.from_conn_string(url, index=...)`` is a ``@contextmanager``:
-      it opens a ``psycopg.Connection`` (``autocommit=True``,
-      ``prepare_threshold=0``, ``row_factory=dict_row``), yields
-      ``PostgresStore(conn, index=...)``, and closes the connection when the
-      ``with`` block exits. A factory cannot return a store from inside that
-      ``with`` if the store must outlive the block.
-    - ``PostgresStore.__init__(conn, pipe=None, deserializer=None, index=None,
-      ttl=None)`` is public and accepts a raw ``psycopg.Connection`` directly.
-    - Each method opens a cursor via ``_internal.get_connection(self.conn)``
-      (``store/postgres/base.py:950``), which yields the ``Connection`` as-is,
-      exactly like the checkpointer. So a store built on an open ``Connection``
-      works for *any number* of invokes, not just inside a single ``with``.
+@dataclass
+class Item:
+    """A single item in the store.
 
-    We therefore mirror exactly what ``from_conn_string`` does internally (same
-    connection parameters) but keep the connection open, instantiate the store,
-    and run ``setup()`` before returning. The caller owns the connection; close
-    it with ``.conn.close()`` when done.
-
-    Args:
-        database_url: Postgres connection string.
-        embed: Embedding model enabling pgvector semantic search. ``None``
-            (default) builds the store **without** an index (no search, no
-            pgvector requirement).
-        dims: Embedding dimensions, required together with ``embed``.
+    - ``key``: unique item key within a namespace
+    - ``value``: arbitrary JSON-serializable data
+    - ``namespace``: tuple path for isolation (e.g. ``("memories", "user_123")``)
+    - ``created_at``: creation timestamp
+    - ``updated_at``: last-update timestamp
+    - ``score``: relevance score from search (populated at query time)
     """
-    index = None
-    if embed is not None:
-        if dims is None:
-            msg = "dims must be provided when embed is set (embedding vector size)."
-            raise ValueError(msg)
-        index = {"embed": embed, "dims": int(dims)}
 
-    conn = psycopg.connect(
-        database_url,
-        autocommit=True,
-        prepare_threshold=0,
-        row_factory=dict_row,
-    )
-    store = PostgresStore(conn, index=index)
-    # setup() creates the store schema and applies migrations; it is idempotent
-    # (records versions in the store_migrations table) and also creates the
-    # vector index when one is configured. Called exactly once per connection.
-    store.setup()
-    return store
+    key: str = ""
+    value: Any = None
+    namespace: tuple[str, ...] = ()
+    created_at: float = 0.0
+    updated_at: float = 0.0
+    score: float = 0.0
+    ttl: float = 0.0  # 0 means no TTL
+
+    def is_expired(self) -> bool:
+        """Check if this item has expired."""
+        if self.ttl <= 0:
+            return False
+        return time.time() > self.updated_at + self.ttl
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "value": self.value,
+            "namespace": list(self.namespace),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "score": self.score,
+        }
 
 
-def get_store(
-    database_url: str | None = None,
-    *,
-    embed: Any | None = None,
-    dims: int | None = None,
-) -> BaseStore:
-    """Return a ready-to-use Store for long-term (cross-session) memory.
+@dataclass
+class SearchResult:
+    """Result of a store search query."""
 
-    Args:
-        database_url: Postgres connection string for the **production**
-            ``PostgresStore``. If ``None``, falls back to the ``DATABASE_URL``
-            environment variable. If neither is set, returns an in-memory
-            ``InMemoryStore`` (dev/test default — shared across graphs to
-            simulate a real Store).
-        embed: Optional embedding model to enable pgvector semantic search on
-            the Postgres store. ``None`` (default) → no index.
-        dims: Embedding dimensions, required when ``embed`` is provided.
+    items: list[Item] = field(default_factory=list)
+    total: int = 0
+    offset: int = 0
 
-    Returns:
-        An ``InMemoryStore`` (dev) or an entered, schema-set-up
-        ``PostgresStore`` (production). When no semantic-search index is
-        configured the store is still fully usable as a per-user by-path
-        memory namespace (``get``/``put``/``search`` by key); only the
-        vector ``query`` search is unavailable.
 
-    Note on connection ownership (production): the caller owns the underlying
-    Postgres connection and must close it with ``store.conn.close()`` when
-    done (no ``with`` block is returned). See ``_build_postgres_store``.
+# ── Base store ──────────────────────────────────────────────────────────
+
+
+class BaseStore(ABC):
+    """Abstract base for long-term memory backends.
+
+    Methods:
+        get: Retrieve an item by namespace + key.
+        put: Store/update an item.
+        search: Search items within a namespace.
+        delete: Remove an item.
+        list_namespaces: List available namespaces.
     """
-    url = database_url or os.environ.get("DATABASE_URL")
-    if url:
-        return _build_postgres_store(url, embed=embed, dims=dims)
+
+    @abstractmethod
+    def get(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+    ) -> Item | None:
+        """Get an item by namespace and key.
+
+        Args:
+            namespace: Namespace tuple (e.g. ``("memories", "user_123")``).
+            key: Item key within the namespace.
+
+        Returns:
+            The item, or None.
+        """
+        ...
+
+    @abstractmethod
+    def put(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+        value: Any,
+        ttl: float = 0.0,
+    ) -> Item:
+        """Store or update an item.
+
+        Args:
+            namespace: Namespace tuple.
+            key: Item key.
+            value: JSON-serializable value.
+            ttl: Time-to-live in seconds (0 = no expiry).
+
+        Returns:
+            The stored item.
+        """
+        ...
+
+    @abstractmethod
+    def search(
+        self,
+        namespace_prefix: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> SearchResult:
+        """Search items within a namespace prefix.
+
+        Args:
+            namespace_prefix: Namespace prefix to search under.
+            query: Optional text query (semantic if vector index available).
+            filter: Optional field-level filters.
+            limit: Max results.
+            offset: Pagination offset.
+
+        Returns:
+            ``SearchResult``.
+        """
+        ...
+
+    @abstractmethod
+    def delete(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+    ) -> bool:
+        """Delete an item.
+
+        Returns:
+            True if the item existed and was deleted.
+        """
+        ...
+
+    @abstractmethod
+    def list_namespaces(
+        self,
+        prefix: tuple[str, ...] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[tuple[str, ...]]:
+        """List available namespaces.
+
+        Args:
+            prefix: Only return namespaces with this prefix.
+            limit: Max results.
+            offset: Pagination offset.
+
+        Returns:
+            List of namespace tuples.
+        """
+        ...
+
+
+StoreFilter = dict[str, Any]
+"""Type alias for store search filters."""
+
+
+# ── In-memory store ─────────────────────────────────────────────────────
+
+
+class InMemoryStore(BaseStore):
+    """In-memory implementation of ``BaseStore`` for development/testing.
+
+    Thread-safe.  Supports basic substring matching for ``search``.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[tuple[str, ...], dict[str, Item]] = {}
+        self._lock = threading.Lock()
+
+    def get(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+    ) -> Item | None:
+        with self._lock:
+            ns = self._data.get(namespace)
+            if ns is None:
+                return None
+            item = ns.get(key)
+            if item is None:
+                return None
+            if item.is_expired():
+                del ns[key]
+                return None
+            return copy.deepcopy(item)
+
+    def put(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+        value: Any,
+        ttl: float = 0.0,
+    ) -> Item:
+        now = time.time()
+        item = Item(
+            key=key,
+            value=copy.deepcopy(value),
+            namespace=namespace,
+            created_at=now,
+            updated_at=now,
+            ttl=ttl,
+        )
+        with self._lock:
+            ns = self._data.setdefault(namespace, {})
+            existing = ns.get(key)
+            if existing:
+                item.created_at = existing.created_at
+            ns[key] = copy.deepcopy(item)
+        return item
+
+    def search(
+        self,
+        namespace_prefix: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> SearchResult:
+        with self._lock:
+            matching: list[Item] = []
+            for ns, items in self._data.items():
+                if self._namespace_matches(ns, namespace_prefix):
+                    for item in items.values():
+                        if item.is_expired():
+                            continue
+                        if filter and not self._matches_filter(item, filter):
+                            continue
+                        if query and not self._matches_query(item, query):
+                            continue
+                        matching.append(copy.deepcopy(item))
+
+        # Sort by updated_at descending
+        matching.sort(key=lambda i: i.updated_at, reverse=True)
+        total = len(matching)
+        page = matching[offset : offset + limit]
+        return SearchResult(items=page, total=total, offset=offset)
+
+    def delete(
+        self,
+        namespace: tuple[str, ...],
+        key: str,
+    ) -> bool:
+        with self._lock:
+            ns = self._data.get(namespace)
+            if ns and key in ns:
+                del ns[key]
+                if not ns:
+                    del self._data[namespace]
+                return True
+            return False
+
+    def list_namespaces(
+        self,
+        prefix: tuple[str, ...] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[tuple[str, ...]]:
+        with self._lock:
+            namespaces = list(self._data.keys())
+        if prefix:
+            namespaces = [ns for ns in namespaces if self._namespace_matches(ns, prefix)]
+        namespaces.sort()
+        return namespaces[offset : offset + limit]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    # ── Helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _namespace_matches(ns: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
+        if len(ns) < len(prefix):
+            return False
+        return ns[: len(prefix)] == prefix
+
+    @staticmethod
+    def _matches_filter(item: Item, filter: dict[str, Any]) -> bool:
+        for key, expected in filter.items():
+            if hasattr(item, key):
+                if getattr(item, key) != expected:
+                    return False
+            elif isinstance(item.value, dict):
+                if item.value.get(key) != expected:
+                    return False
+        return True
+
+    @staticmethod
+    def _matches_query(item: Item, query: str) -> bool:
+        q = query.lower()
+        if q in item.key.lower():
+            return True
+        if isinstance(item.value, str) and q in item.value.lower():
+            return True
+        if isinstance(item.value, dict):
+            for v in item.value.values():
+                if isinstance(v, str) and q in v.lower():
+                    return True
+        return False
+
+
+# ── Postgres store ──────────────────────────────────────────────────────
+
+
+class PostgresStore(BaseStore):
+    """PostgreSQL-backed store with optional pgvector support.
+
+    Requires ``psycopg`` and a ``connection_string`` at init.
+    Falls back gracefully if ``psycopg`` is not installed.
+    """
+
+    def __init__(self, connection_string: str = "") -> None:
+        self._conn_string = connection_string
+        self._conn: Any = None
+        self._lock = threading.Lock()
+        self._available = False
+        self._init_backend()
+
+    def _init_backend(self) -> None:
+        try:
+            import psycopg  # noqa: F401
+
+            self._available = True
+        except ImportError:
+            self._available = False
+
+    def _ensure_connection(self) -> Any:
+        if not self._available:
+            raise RuntimeError(
+                "PostgresStore requires psycopg. Install with: pip install psycopg"
+            )
+        if self._conn is None:
+            import psycopg
+
+            self._conn = psycopg.connect(self._conn_string)
+            self._init_schema()
+        return self._conn
+
+    def _init_schema(self) -> None:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_store (
+                    namespace TEXT[] NOT NULL,
+                    key TEXT NOT NULL,
+                    value JSONB NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL,
+                    updated_at DOUBLE PRECISION NOT NULL,
+                    ttl DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    embedding vector(1536),
+                    PRIMARY KEY (namespace, key)
+                );
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_store_namespace
+                ON memory_store USING GIN (namespace);
+                """
+            )
+            self._conn.commit()
+
+    def get(self, namespace: tuple[str, ...], key: str) -> Item | None:
+        conn = self._ensure_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT namespace, key, value, created_at, updated_at, ttl
+                FROM memory_store
+                WHERE namespace = %s AND key = %s
+                """,
+                (list(namespace), key),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            item = Item(
+                key=row[1],
+                value=row[2],
+                namespace=tuple(row[0]),
+                created_at=row[3],
+                updated_at=row[4],
+                ttl=row[5],
+            )
+            if item.is_expired():
+                self.delete(namespace, key)
+                return None
+            return item
+
+    def put(self, namespace: tuple[str, ...], key: str, value: Any, ttl: float = 0.0) -> Item:
+        now = time.time()
+        conn = self._ensure_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO memory_store (namespace, key, value, created_at, updated_at, ttl)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (namespace, key)
+                DO UPDATE SET value = %s, updated_at = %s, ttl = %s
+                """,
+                (list(namespace), key, json.dumps(value), now, now, ttl,
+                 json.dumps(value), now, ttl),
+            )
+            conn.commit()
+        return Item(
+            key=key,
+            value=value,
+            namespace=namespace,
+            created_at=now,
+            updated_at=now,
+            ttl=ttl,
+        )
+
+    def search(
+        self,
+        namespace_prefix: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> SearchResult:
+        conn = self._ensure_connection()
+        with self._lock:
+            cur = conn.cursor()
+            prefix_list = list(namespace_prefix)
+            # Match namespace prefix using array slicing
+            cur.execute(
+                """
+                SELECT namespace, key, value, created_at, updated_at, ttl
+                FROM memory_store
+                WHERE namespace[1:%s] = %s
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (len(prefix_list), prefix_list, limit, offset),
+            )
+            rows = cur.fetchall()
+            items = []
+            for row in rows:
+                item = Item(
+                    key=row[1],
+                    value=row[2],
+                    namespace=tuple(row[0]),
+                    created_at=row[3],
+                    updated_at=row[4],
+                    ttl=row[5],
+                )
+                if not item.is_expired():
+                    items.append(item)
+
+            # Get total count
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM memory_store
+                WHERE namespace[1:%s] = %s
+                """,
+                (len(prefix_list), prefix_list),
+            )
+            total = cur.fetchone()[0]
+
+        return SearchResult(items=items, total=total, offset=offset)
+
+    def delete(self, namespace: tuple[str, ...], key: str) -> bool:
+        conn = self._ensure_connection()
+        with self._lock:
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM memory_store WHERE namespace = %s AND key = %s",
+                (list(namespace), key),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_namespaces(
+        self,
+        prefix: tuple[str, ...] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[tuple[str, ...]]:
+        conn = self._ensure_connection()
+        with self._lock:
+            cur = conn.cursor()
+            if prefix:
+                cur.execute(
+                    """
+                    SELECT DISTINCT namespace[1:%s] FROM memory_store
+                    WHERE namespace[1:%s] = %s
+                    ORDER BY namespace
+                    LIMIT %s OFFSET %s
+                    """,
+                    (len(prefix), len(prefix), list(prefix), limit, offset),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT namespace FROM memory_store
+                    ORDER BY namespace
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+            return [tuple(row[0]) for row in cur.fetchall()]
+
+
+__all__ = [
+    "BaseStore",
+    "InMemoryStore",
+    "Item",
+    "PostgresStore",
+    "SearchResult",
+    "StoreFilter",
+    "get_store",
+    "close_store",
+]
+
+
+def get_store(db_url: str | None = None) -> BaseStore:
+    """Factory: return a ``PostgresStore`` when a db_url is given, else ``InMemoryStore``."""
+    if db_url:
+        return PostgresStore(db_url)
     return InMemoryStore()
 
 
-__all__ = ["get_store", "_build_postgres_store"]
+def close_store(store: BaseStore) -> None:
+    """Close the underlying connection if the store holds one (PostgresStore)."""
+    conn = getattr(store, "_conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass

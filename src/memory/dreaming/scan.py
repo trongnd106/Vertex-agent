@@ -84,7 +84,7 @@ def scan_and_dream(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scan", description=__doc__)
-    parser.add_argument("--db-url", default=None, help="Postgres URL; defaults to DATABASE_URL env. Omit for in-memory.")
+    parser.add_argument("--db-url", default=None, help=f"Postgres URL; defaults to DATABASE_URL env or {config.DATABASE_URL!r}. Omit for in-memory.")
     parser.add_argument("--user", required=True, help="user_id whose threads to dream (thread_id->user mapping is not persisted).")
     parser.add_argument("--model", default="openai:gpt-4o-mini", help="Cheap extraction model spec.")
     parser.add_argument("--thread-limit", type=int, default=None, help="Only dream over the first N threads (lexicographic).")
