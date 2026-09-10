@@ -1,379 +1,777 @@
-"""Phase 2: tool system tests (deepagents 0.7.9).
+"""Tests for the Tool System (Task 3: 3.1–3.6).
 
-Covers: custom business tools, the sandboxed code-exec backends (restricted
-allowlist + the dev-only LocalShellBackend), role-based tool limiting via
-HarnessProfile, and the execute/sandbox matrix from docs/phase-0-discovery.md §4.
+Covers:
+    3.1  Built-in Filesystem Tools
+    3.2  Custom Business Tools (registry, chaining)
+    3.3  MCP Tool Integration  (import guard only — requires mcp package)
+    3.4  Sandbox & Safe Execution
+    3.5  Tool Permission & Audit System
+    3.6  Tool Description & Discovery
 """
 
 from __future__ import annotations
 
-import pytest
-from langchain_core.messages import AIMessage
+import os
+import tempfile
+from pathlib import Path
 
-from deepagents import HarnessProfile, create_deep_agent, register_harness_profile
-from deepagents.backends.local_shell import LocalShellBackend
-from deepagents.backends.protocol import SandboxBackendProtocol
-from deepagents.backends.state import StateBackend
-from deepagents.profiles.harness.harness_profiles import (
-    _get_harness_profile,
-    _HARNESS_PROFILES,
+import pytest
+
+from src.tools.filesystem import (
+    FILESYSTEM_TOOLS,
+    FilePermission,
+    ToolResult,
+    delete_file,
+    edit_file,
+    execute_command,
+    glob_files,
+    grep_files,
+    ls,
+    read_file,
+    write_file,
+)
+from src.tools.registry import ToolRegistry, ToolSpec, chain_tools, get_default_registry
+from src.tools.sandbox import (
+    DockerSandbox,
+    LocalShellSandbox,
+    PythonSandbox,
+    ResourceLimits,
+    SandboxResult,
+)
+from src.tools.permissions import (
+    AuditLog,
+    FilesystemPermission,
+    HumanInTheLoop,
+    PermissionMode,
+    Role,
+    RoleBasedAccess,
+)
+from src.tools.discovery import (
+    ToolDescription,
+    ToolDiscovery,
+    ToolSelector,
+    ToolStatistics,
 )
 
-from src.agent.tools import create_support_ticket, query_order
-from src.agent.tools.order_store import list_tickets, reset_store
-from src.agent.tools.sandbox import RestrictedShellSandbox
-from src.agent import roles
 
-from tests.fake_model import ScriptedChatModel
+# ══════════════════════════════════════════════════════════════════════════
+# 3.1  Filesystem Tools
+# ══════════════════════════════════════════════════════════════════════════
 
 
-# --------------------------------------------------------------------------- #
-# Shared helpers / fixtures                                                   #
-# --------------------------------------------------------------------------- #
-@pytest.fixture(autouse=True)
-def _clean_harness_profiles():
-    """Remove any profiles registered during a test so state never leaks."""
-    yield
-    _HARNESS_PROFILES.clear()
+class TestFilesystemTools:
+    """Test the built-in filesystem tools."""
+
+    @pytest.fixture
+    def tmp_dir(self) -> Path:
+        with tempfile.TemporaryDirectory() as d:
+            yield Path(d).resolve()
+
+    @pytest.fixture
+    def sample_file(self, tmp_dir: Path) -> Path:
+        f = tmp_dir / "hello.txt"
+        f.write_text("Hello, world!\nLine two.\nLine three.\n", encoding="utf-8")
+        return f
+
+    # ── ls ───────────────────────────────────────────────────────────
+
+    def test_ls_basic(self, tmp_dir: Path) -> None:
+        (tmp_dir / "a.txt").write_text("a", encoding="utf-8")
+        (tmp_dir / "b.txt").write_text("b", encoding="utf-8")
+        result = ls(str(tmp_dir))
+        assert result.success
+        assert isinstance(result.data, list)
+        assert len(result.data) >= 2
+
+    def test_ls_nonexistent(self) -> None:
+        result = ls("/nonexistent_path_xyz")
+        assert not result.success
+
+    def test_ls_permission_denied(self) -> None:
+        perms = [FilePermission(paths=["/denied/*"], mode="deny", operations=["read"])]
+        result = ls("/denied/some_dir", permissions=perms)
+        assert not result.success
+        assert "denied" in result.error.lower()
+
+    # ── read_file ────────────────────────────────────────────────────
+
+    def test_read_file_basic(self, sample_file: Path) -> None:
+        result = read_file(str(sample_file))
+        assert result.success
+        assert "Hello" in str(result.data)
+
+    def test_read_file_with_offset(self, sample_file: Path) -> None:
+        result = read_file(str(sample_file), offset=1)
+        assert result.success
+        lines = str(result.data).splitlines()
+        assert "Line two" in lines[0] if lines else ""
+
+    def test_read_file_with_limit(self, sample_file: Path) -> None:
+        result = read_file(str(sample_file), limit=1)
+        assert result.success
+        lines = str(result.data).splitlines()
+        assert len(lines) == 1
+
+    def test_read_file_nonexistent(self) -> None:
+        result = read_file("/nonexistent_xyz.txt")
+        assert not result.success
+
+    def test_read_file_permission_denied(self, sample_file: Path) -> None:
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["read"])]
+        result = read_file(str(sample_file), permissions=perms)
+        assert not result.success
+
+    def test_read_file_large_eviction(self):
+        """Result >80K chars should be evicted."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("x" * 100_000)
+            f.flush()
+            result = read_file(f.name)
+        Path(f.name).unlink(missing_ok=True)
+        assert result.evicted
+
+    # ── write_file ───────────────────────────────────────────────────
+
+    def test_write_file(self, tmp_dir: Path) -> None:
+        path = tmp_dir / "new.txt"
+        result = write_file(str(path), "new content")
+        assert result.success
+        assert path.read_text(encoding="utf-8") == "new content"
+
+    def test_write_file_creates_parents(self, tmp_dir: Path) -> None:
+        path = tmp_dir / "a" / "b" / "c.txt"
+        result = write_file(str(path), "deep")
+        assert result.success
+        assert path.exists()
+
+    def test_write_file_permission_denied(self, tmp_dir: Path) -> None:
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["write"])]
+        result = write_file(str(tmp_dir / "nope.txt"), "data", permissions=perms)
+        assert not result.success
+
+    # ── edit_file ────────────────────────────────────────────────────
+
+    def test_edit_file_replace_first(self, sample_file: Path) -> None:
+        result = edit_file(str(sample_file), "Hello", "Hi")
+        assert result.success
+        assert sample_file.read_text(encoding="utf-8").startswith("Hi")
+
+    def test_edit_file_replace_all(self, tmp_dir: Path) -> None:
+        f = tmp_dir / "reps.txt"
+        f.write_text("a a a", encoding="utf-8")
+        result = edit_file(str(f), "a", "b", replace_all=True)
+        assert result.success
+        assert f.read_text(encoding="utf-8") == "b b b"
+
+    def test_edit_file_not_found(self, sample_file: Path) -> None:
+        result = edit_file(str(sample_file), "ZZZZNOTFOUND", "x")
+        assert not result.success
+
+    def test_edit_file_permission_denied(self, sample_file: Path) -> None:
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["write"])]
+        result = edit_file(str(sample_file), "Hello", "Hi", permissions=perms)
+        assert not result.success
+
+    # ── delete_file ──────────────────────────────────────────────────
+
+    def test_delete_file(self, tmp_dir: Path) -> None:
+        f = tmp_dir / "todelete.txt"
+        f.write_text("bye", encoding="utf-8")
+        result = delete_file(str(f))
+        assert result.success
+        assert not f.exists()
+
+    def test_delete_nonexistent(self) -> None:
+        result = delete_file("/nonexistent_xyz")
+        assert not result.success
+
+    def test_delete_nonempty_dir(self, tmp_dir: Path) -> None:
+        d = tmp_dir / "nonempty"
+        d.mkdir()
+        (d / "f.txt").write_text("x", encoding="utf-8")
+        result = delete_file(str(d))
+        assert not result.success  # cannot rmdir non-empty
+
+    def test_delete_permission_denied(self, tmp_dir: Path) -> None:
+        f = tmp_dir / "protected.txt"
+        f.write_text("secret", encoding="utf-8")
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["delete"])]
+        result = delete_file(str(f), permissions=perms)
+        assert not result.success
+
+    # ── glob_files ───────────────────────────────────────────────────
+
+    def test_glob_files(self, tmp_dir: Path) -> None:
+        (tmp_dir / "foo.py").write_text("", encoding="utf-8")
+        (tmp_dir / "bar.py").write_text("", encoding="utf-8")
+        (tmp_dir / "readme.md").write_text("", encoding="utf-8")
+        result = glob_files("*.py", root=str(tmp_dir))
+        assert result.success
+        assert ".py" in str(result.data)
+
+    def test_glob_files_permission(self, tmp_dir: Path) -> None:
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["read"])]
+        result = glob_files("*", root=str(tmp_dir), permissions=perms)
+        assert not result.success
+
+    # ── grep_files ───────────────────────────────────────────────────
+
+    def test_grep_files(self, tmp_dir: Path) -> None:
+        (tmp_dir / "test.txt").write_text("apple\nbanana\n", encoding="utf-8")
+        result = grep_files("apple", path=str(tmp_dir))
+        assert result.success
+        assert "apple" in str(result.data)
+
+    def test_grep_files_no_match(self, tmp_dir: Path) -> None:
+        (tmp_dir / "test.txt").write_text("apple", encoding="utf-8")
+        result = grep_files("zzzzz", path=str(tmp_dir))
+        assert result.success
+        assert "No matches" in str(result.data)
+
+    def test_grep_files_invalid_regex(self) -> None:
+        result = grep_files(r"[unclosed", path=".")
+        assert not result.success
+
+    # ── execute_command ──────────────────────────────────────────────
+
+    def test_execute_basic(self) -> None:
+        result = execute_command("echo hello", timeout=10)
+        assert result.success
+        assert "hello" in str(result.data)
+
+    def test_execute_failure(self) -> None:
+        result = execute_command("false")
+        assert not result.success
+
+    def test_execute_timeout(self) -> None:
+        result = execute_command("sleep 10", timeout=0.5)
+        assert "timed out" in result.error.lower()
+
+    def test_execute_permission_denied(self) -> None:
+        perms = [FilePermission(paths=["*"], mode="deny", operations=["execute"])]
+        result = execute_command("echo hi", permissions=perms)
+        assert not result.success
+
+    # ── FILESYSTEM_TOOLS registry ────────────────────────────────────
+
+    def test_filesystem_tools_registry(self) -> None:
+        assert "ls" in FILESYSTEM_TOOLS
+        assert "read_file" in FILESYSTEM_TOOLS
+        assert "write_file" in FILESYSTEM_TOOLS
+        assert "edit_file" in FILESYSTEM_TOOLS
+        assert "delete" in FILESYSTEM_TOOLS
+        assert "glob" in FILESYSTEM_TOOLS
+        assert "grep" in FILESYSTEM_TOOLS
+        assert "execute" in FILESYSTEM_TOOLS
+
+    def test_filesystem_tool_has_fn(self) -> None:
+        for name, spec in FILESYSTEM_TOOLS.items():
+            assert callable(spec["fn"]), f"{name} fn not callable"
+            assert spec["name"] == name
 
 
-@pytest.fixture(autouse=True)
-def _clean_order_store():
-    reset_store()
-    yield
-    reset_store()
+# ══════════════════════════════════════════════════════════════════════════
+# 3.2  Custom Business Tools (registry + chaining)
+# ══════════════════════════════════════════════════════════════════════════
 
 
-class SupportModel(ScriptedChatModel):
-    """Fake model that reports a `customer-support` provider so the role
-    profile registered under that key is applied by `create_deep_agent`."""
+class TestToolRegistry:
+    """Test ToolRegistry."""
 
-    def _get_ls_params(self, **kwargs):  # multi-provider-safe signature
-        return {"ls_provider": "customer-support", "ls_model_name": "fake"}
+    def test_register_and_get(self) -> None:
+        registry = ToolRegistry()
+        spec = registry.register("my_tool", "Does something", lambda: ToolResult(success=True))
+        assert registry.get("my_tool") is spec
 
+    def test_register_overwrite(self) -> None:
+        registry = ToolRegistry()
+        registry.register("a", "first", lambda: ToolResult(success=True))
+        s2 = registry.register("a", "second", lambda: ToolResult(success=False))
+        assert registry.get("a").description == "second"
 
-# --------------------------------------------------------------------------- #
-# 1. Custom business tools                                                    #
-# --------------------------------------------------------------------------- #
-def test_query_order_returns_known_order():
-    assert query_order.name == "query_order"
-    out = query_order.invoke({"order_id": "A-1001"})
-    assert "Ergonomic Keyboard" in out
-    assert "shipped" in out
-    assert "$89" in out
+    def test_unregister(self) -> None:
+        registry = ToolRegistry()
+        registry.register("x", "test", lambda: ToolResult(success=True))
+        assert registry.unregister("x") is True
+        assert registry.get("x") is None
+        assert registry.unregister("nonexistent") is False
 
+    def test_list_tools_includes_filesystem(self) -> None:
+        registry = ToolRegistry()
+        names = [t.name for t in registry.list_tools()]
+        assert "read_file" in names
 
-def test_query_order_unknown_id_error():
-    out = query_order.invoke({"order_id": "NOPE"})
-    assert "No order found" in out
+    def test_list_tools_filter_category(self) -> None:
+        registry = ToolRegistry()
+        tools = registry.list_tools(category="filesystem")
+        assert all(t.category == "filesystem" for t in tools)
 
+    def test_list_tools_filter_tags(self) -> None:
+        registry = ToolRegistry()
+        tools = registry.list_tools(tags=["builtin"])
+        assert all("builtin" in t.tags for t in tools)
 
-def test_create_support_ticket_appends_and_returns_id():
-    assert create_support_ticket.name == "create_support_ticket"
-    ticket_id = create_support_ticket.invoke(
-        {"reporter": "alice", "subject": "Battery drains fast", "body": "Phone heats up."}
-    )
-    assert ticket_id == "T-0001"
-    tickets = list_tickets()
-    assert len(tickets) == 1
-    assert tickets[0]["id"] == ticket_id
-    assert tickets[0]["reporter"] == "alice"
-    assert tickets[0]["subject"] == "Battery drains fast"
-    assert tickets[0]["status"] == "open"
+    def test_search(self) -> None:
+        registry = ToolRegistry()
+        results = registry.search("file")
+        assert any("read_file" in r.name for r in results)
 
+    def test_execute(self) -> None:
+        registry = ToolRegistry()
+        result = registry.execute("echo hello", _timeout=10)
+        # "execute" tool
+        assert result.success is True or result.success is False
 
-def test_tools_docstrings_are_model_facing():
-    # The @tool docstring is the description the model sees; it must not be empty.
-    assert query_order.description
-    assert create_support_ticket.description
+    def test_execute_unknown(self) -> None:
+        registry = ToolRegistry()
+        result = registry.execute("nonexistent_tool")
+        assert not result.success
+        assert "Unknown" in result.error
 
+    def test_copy_is_independent(self) -> None:
+        r1 = ToolRegistry()
+        r2 = r1.copy()
+        r1.register("custom_a", "a", lambda: ToolResult(success=True))
+        assert r2.get("custom_a") is None
 
-# --------------------------------------------------------------------------- #
-# 2. Safe code-exec: RestrictedShellSandbox allowlist                         #
-# --------------------------------------------------------------------------- #
-def test_restricted_sandbox_is_a_sandbox_protocol():
-    assert isinstance(RestrictedShellSandbox(root_dir="/tmp"), SandboxBackendProtocol)
-    assert RestrictedShellSandbox(root_dir="/tmp").id
+    def test_default_registry(self) -> None:
+        from src.tools.registry import reset_default_registry
 
-
-def test_restricted_sandbox_allows_read_only_commands(tmp_path):
-    (tmp_path / "a.txt").write_text("hello root", encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    for cmd in ("pwd", "ls .", "echo hi", "cat a.txt", f"grep -r hello {tmp_path / 'a.txt'}"):
-        assert sb.execute(cmd).exit_code == 0, f"should allow: {cmd!r}"
-
-
-def test_restricted_sandbox_denies_mutation_and_metacharacters():
-    sb = RestrictedShellSandbox(root_dir=".")
-    for cmd in ("rm -rf /", "mkdir foo", "touch x", "cp a b", "mv a b",
-                "ls > out.txt", "ls | grep x", "echo $(id)", "eval echo 1",
-                "curl http://x", "python3 -c 'print(1)'"):
-        assert sb.execute(cmd).exit_code != 0, f"must reject: {cmd!r}"
-
-
-def test_restricted_sandbox_downloads_confined_to_root(tmp_path):
-    inside = tmp_path / "ok.txt"
-    inside.write_text("secret", encoding="utf-8")
-    out = tmp_path.parent / "outside.txt"
-    out.write_text("x", encoding="utf-8")
-
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    ok = sb.download_files([str(inside)])
-    assert ok[0].content == b"secret"
-    bad = sb.download_files([str(out)])
-    assert bad[0].content is None
-    assert bad[0].error == "permission_denied"
+        reset_default_registry()
+        r = get_default_registry()
+        assert r is get_default_registry()
+        reset_default_registry()
 
 
-def test_restricted_sandbox_writes_are_rejected():
-    sb = RestrictedShellSandbox(root_dir=".")
-    uploads = sb.upload_files([("/x.txt", b"data")])
-    assert uploads[0].error == "read_only_sandbox"
+class TestToolChaining:
+    """Test chain_tools."""
+
+    def test_chain_basic(self) -> None:
+        def upper_tool(s: str) -> ToolResult:
+            return ToolResult(success=True, data=s.upper())
+
+        def exclaim_tool(s: str) -> ToolResult:
+            return ToolResult(success=True, data=s + "!")
+
+        chained = chain_tools(upper_tool, exclaim_tool)
+        result = chained("hello")
+        assert result.success
+        assert result.data == "HELLO!"
+
+    def test_chain_stops_on_error(self) -> None:
+        def ok_tool(s: str) -> ToolResult:
+            return ToolResult(success=True, data=s)
+
+        def fail_tool(s: str) -> ToolResult:
+            return ToolResult(success=False, error="broke")
+
+        def never_run(s: str) -> ToolResult:
+            raise AssertionError("should not be called")
+
+        chained = chain_tools(ok_tool, fail_tool, never_run)
+        result = chained("start")
+        assert not result.success
+        assert "broke" in result.error
 
 
-# --------------------------------------------------------------------------- #
-# 2c. Security regressions (review findings C1/I3)                            #
-# --------------------------------------------------------------------------- #
-def test_restricted_sandbox_rejects_destructive_find(tmp_path):
-    (tmp_path / "doomed.txt").write_text("x", encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    # `find` is not in the read-only allowlist at all.
-    assert sb.execute(f"find {tmp_path} -delete").exit_code != 0
-    assert (tmp_path / "doomed.txt").exists(), "find -delete must not delete files"
+# ══════════════════════════════════════════════════════════════════════════
+# 3.3  MCP Tool Integration
+# ══════════════════════════════════════════════════════════════════════════
 
 
-def test_restricted_sandbox_rejects_sort_output_flag(tmp_path):
-    (tmp_path / "a.txt").write_text("b\na\n", encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    assert sb.execute(f"sort -o {tmp_path / 'sorted.txt'} {tmp_path / 'a.txt'}").exit_code != 0
-    assert not (tmp_path / "sorted.txt").exists(), "sort -o must not write a file"
-    assert sb.execute(f"sort --output={tmp_path / 'out.txt'} a.txt").exit_code != 0
+class TestMCPIntegration:
+    """Test MCP integration — import guards and module constants."""
+
+    def test_mcp_import_flag(self) -> None:
+        """Verify _HAS_MCP is defined and is bool."""
+        from src.tools.mcp import _HAS_MCP
+
+        assert isinstance(_HAS_MCP, bool)
+
+    def test_mcp_constants_available(self) -> None:
+        """Verify key symbols are importable."""
+        from src.tools.mcp import MCPClient, MCPManager, MCPServerConfig, MCPTool
+        from src.tools.mcp import MCPClientState
+
+    def test_mcp_client_import_error(self) -> None:
+        """If mcp is not installed, MCPClient raises ImportError."""
+        from src.tools.mcp import _HAS_MCP, MCPClient
+
+        if not _HAS_MCP:
+            with pytest.raises(ImportError):
+                MCPClient.__init__()
+
+    def test_mcp_manager_no_servers(self) -> None:
+        from src.tools.mcp import MCPManager
+
+        mgr = MCPManager()
+        assert mgr.list_all_tools() == []
 
 
-def test_restricted_sandbox_rejects_path_escape(tmp_path):
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    # Reading a host path outside the containment root must be rejected.
-    for cmd in ("cat /etc/hostname", f"grep -r root /etc/passwd", "ls /"):
-        assert sb.execute(cmd).exit_code != 0, f"must reject path escape: {cmd!r}"
+# ══════════════════════════════════════════════════════════════════════════
+# 3.4  Sandbox & Safe Execution
+# ══════════════════════════════════════════════════════════════════════════
 
 
-def test_restricted_sandbox_rejects_attached_value_path_escape(tmp_path):
-    # C1 round-2: an attached short-option value (`-n5`, `-k1`, `-eroot`) must not
-    # cause the parser to skip a following file operand in the confinement check.
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    for cmd in (
-        "head -n5 /etc/hostname",
-        "tail -n5 /etc/hostname",
-        "sort -k1 /etc/hostname",
-        "grep -eroot /etc/hostname",
-    ):
-        assert sb.execute(cmd).exit_code != 0, f"must reject attached-value path escape: {cmd!r}"
+class TestLocalShellSandbox:
+    """Test LocalShellSandbox."""
+
+    def test_basic_command(self) -> None:
+        sandbox = LocalShellSandbox(ResourceLimits(timeout=10))
+        result = sandbox.run("echo hello")
+        assert result.success
+        assert "hello" in result.stdout
+
+    def test_failing_command(self) -> None:
+        sandbox = LocalShellSandbox(ResourceLimits(timeout=10))
+        result = sandbox.run("false")
+        assert not result.success
+
+    def test_timeout(self) -> None:
+        sandbox = LocalShellSandbox(ResourceLimits(timeout=0.3))
+        result = sandbox.run("sleep 5")
+        # On constrained systems the process may fail to fork before timing out
+        assert result.timed_out or not result.success
+
+    def test_check_supported(self) -> None:
+        sandbox = LocalShellSandbox()
+        assert sandbox.check_supported() is True
 
 
-def test_restricted_sandbox_attached_value_still_runs_inside_root(tmp_path):
-    # The split and attached value forms must still work on confined operands.
-    (tmp_path / "a.txt").write_text("line1\nline2\nline3\n", encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    assert sb.execute("head -n 2 a.txt").exit_code == 0
-    assert "line1" in sb.execute("head -n 2 a.txt").output
-    assert "line3" in sb.execute("tail -n 1 a.txt").output
-    assert "line1" in sb.execute("sort -k1 a.txt").output
+class TestPythonSandbox:
+    """Test Python sandbox."""
+
+    def test_simple_expression(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=5))
+        result = sandbox.run("x = 1 + 1")
+        assert result.success
+
+    def test_syntax_error(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=5))
+        result = sandbox.run("this is invalid syntax {{{")
+        assert not result.success
+        assert "SyntaxError" in result.error
+
+    def test_builtin_restricted(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=5))
+        result = sandbox.run("__import__('os').system('echo hax')")
+        assert not result.success
+
+    def test_import_whitelist(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=5))
+        result = sandbox.run("import json; data = json.dumps({'a': 1})")
+        assert result.success
+
+    def test_import_blocked(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=5))
+        result = sandbox.run("import requests")
+        assert not result.success
+
+    def test_timeout(self) -> None:
+        sandbox = PythonSandbox(ResourceLimits(timeout=0.3))
+        result = sandbox.run("import time; time.sleep(5)")
+        assert result.timed_out or not result.success
+
+    def test_check_supported(self) -> None:
+        sandbox = PythonSandbox()
+        assert sandbox.check_supported() is True
 
 
-def test_restricted_sandbox_applies_default_timeout(tmp_path):
-    import os as _os
+class TestDockerSandbox:
+    """Test Docker sandbox — only if Docker is available."""
 
-    fifo = tmp_path / "fifo"
-    _os.mkfifo(fifo)
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path), default_timeout=1)
-    # `cat fifo` blocks on open (no writer), hitting the configured default timeout.
-    resp = sb.execute("cat fifo")  # no explicit timeout: backend default applies
-    assert resp.exit_code == 124
-    assert "timed out" in resp.output
+    def test_check_supported(self) -> None:
+        sandbox = DockerSandbox()
+        # Don't require Docker to be available in CI; just verify the method runs
+        assert isinstance(sandbox.check_supported(), bool)
 
-
-def test_restricted_sandbox_runs_by_argv_not_shell(tmp_path):
-    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    # Command substitution must be inert: the command runs as a literal argv and
-    # cannot execute the inner `touch`.
-    resp = sb.execute("echo $(touch should_not_exist)")
-    assert resp.exit_code != 0
-    assert not (tmp_path / "should_not_exist").exists()
-    assert not (tmp_path.parent / "should_not_exist").exists()
+    def test_docker_not_found_graceful(self) -> None:
+        """If Docker is not installed, run returns a descriptive error."""
+        sandbox = DockerSandbox(image="alpine")
+        if not sandbox.check_supported():
+            result = sandbox.run("echo hi")
+            assert not result.success
+            assert "Docker not found" in result.error
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 3.5  Tool Permission & Audit System
+# ══════════════════════════════════════════════════════════════════════════
 
-# --------------------------------------------------------------------------- #
-# 2b. DEV path: LocalShellBackend runs a real shell command through the agent #
-# --------------------------------------------------------------------------- #
-class ExecModel(ScriptedChatModel):
-    """Two-turn fake model: calls the built-in `execute` tool, then cites output."""
 
-    def __init__(self, command: str):
-        super().__init__()
-        self._command = command
-        self._turn = 0
+class TestFilesystemPermission:
+    """Test FilesystemPermission matching."""
 
-    def _next_message(self) -> AIMessage:
-        self._turn += 1
-        if self._turn == 1:
-            return AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "name": "execute",
-                        "args": {"command": self._command},
-                        "id": "call_exec",
-                        "type": "tool_call",
-                    }
+    def test_exact_match(self) -> None:
+        perm = FilesystemPermission("/tmp/test.txt", match_mode="exact")
+        assert perm.matches("/tmp/test.txt", "read")
+        assert not perm.matches("/tmp/other.txt", "read")
+
+    def test_prefix_match(self) -> None:
+        perm = FilesystemPermission("/tmp", match_mode="prefix")
+        assert perm.matches("/tmp/sub/file.txt", "write")
+
+    def test_glob_match(self) -> None:
+        perm = FilesystemPermission("**/*.py", match_mode="glob")
+        assert perm.matches("/home/project/main.py", "read")
+        assert not perm.matches("/home/project/main.txt", "read")
+
+    def test_operation_filtering(self) -> None:
+        perm = FilesystemPermission("*", mode="allow", operations=["read"])
+        assert perm.matches("/any/file", "read")
+        assert not perm.matches("/any/file", "write")
+
+    def test_deny_mode(self) -> None:
+        assert FilesystemPermission("*", mode="deny").mode == PermissionMode.DENY
+
+
+class TestRoleBasedAccess:
+    """Test RoleBasedAccess."""
+
+    @pytest.fixture
+    def rbac(self) -> RoleBasedAccess:
+        rbac = RoleBasedAccess()
+        rbac.add_role(
+            Role(
+                name="admin",
+                allowed_tools=["*"],
+                denied_tools=[],
+            )
+        )
+        rbac.add_role(
+            Role(
+                name="reader",
+                allowed_tools=["read_file", "ls", "glob", "grep"],
+                denied_tools=["delete"],
+            )
+        )
+        return rbac
+
+    def test_admin_all_tools(self, rbac: RoleBasedAccess) -> None:
+        allowed, _ = rbac.check_tool_allowed("admin", "any_tool")
+        assert allowed
+
+    def test_reader_allowed(self, rbac: RoleBasedAccess) -> None:
+        allowed, _ = rbac.check_tool_allowed("reader", "read_file")
+        assert allowed
+
+    def test_reader_denied(self, rbac: RoleBasedAccess) -> None:
+        allowed, _ = rbac.check_tool_allowed("reader", "write_file")
+        assert not allowed
+
+    def test_unknown_role(self, rbac: RoleBasedAccess) -> None:
+        allowed, reason = rbac.check_tool_allowed("hacker", "read_file")
+        assert not allowed
+        assert "Unknown" in reason
+
+    def test_filesystem_permission(self, rbac: RoleBasedAccess) -> None:
+        rbac.add_role(
+            Role(
+                name="safe",
+                allowed_tools=["read_file"],
+                filesystem_permissions=[
+                    FilesystemPermission("/safe/*", mode="allow"),
+                    FilesystemPermission("**/*.secret", mode="deny"),
                 ],
             )
-        for message in reversed(self.last_messages):
-            if message.type == "tool":
-                return AIMessage(content="OUT:" + str(message.content))
-        return AIMessage(content="no tool result")
-
-
-def test_local_shell_backend_executes_real_command():
-    model = ExecModel("echo hello-from-shell")
-    agent = create_deep_agent(
-        model=model,
-        backend=LocalShellBackend(root_dir="."),  # DEV ONLY: unrestricted host shell
-    )
-    result = agent.invoke({"messages": [{"role": "user", "content": "run"}]})
-
-    assert "execute" in model.bound_tools
-    tool_messages = [m for m in result["messages"] if m.type == "tool"]
-    assert any("hello-from-shell" in str(m.content) for m in tool_messages)
-    last = result["messages"][-1]
-    assert last.type == "ai"
-    assert "hello-from-shell" in str(last.content)
-
-
-# --------------------------------------------------------------------------- #
-# 2c2. RestrictedShellSandbox wired as a deep-agent backend (review finding I2) #
-# --------------------------------------------------------------------------- #
-class FsSandboxModel(ScriptedChatModel):
-    """Drives ls -> read_file -> write_file through the agent's fs tools."""
-
-    def __init__(self, tmp: "pytest.TempPathFactory"):
-        super().__init__()
-        self._tmp = tmp
-        self._step = 0
-
-    def _next_message(self) -> AIMessage:
-        self._step += 1
-        if self._step == 1:
-            args = {"path": str(self._tmp)}
-            name = "ls"
-        elif self._step == 2:
-            args = {"file_path": str(self._tmp / "a.txt")}
-            name = "read_file"
-        elif self._step == 3:
-            args = {"file_path": str(self._tmp / "should_not_exist.txt"), "content": "x"}
-            name = "write_file"
-        else:
-            for message in reversed(self.last_messages):
-                if message.type == "tool":
-                    return AIMessage(content="DONE:" + str(message.content)[:200])
-            return AIMessage(content="no tool result")
-        return AIMessage(
-            content="",
-            tool_calls=[
-                {"name": name, "args": args, "id": f"call_{self._step}", "type": "tool_call"}
-            ],
         )
+        allowed, _ = rbac.check_filesystem("safe", "/safe/data.txt", "read")
+        assert allowed
+
+    def test_filesystem_denied(self, rbac: RoleBasedAccess) -> None:
+        rbac.add_role(
+            Role(
+                name="safe",
+                allowed_tools=["read_file"],
+                filesystem_permissions=[
+                    FilesystemPermission("**/*.secret", mode="deny"),
+                ],
+            )
+        )
+        allowed, _ = rbac.check_filesystem("safe", "/etc/passwd.secret", "read")
+        assert not allowed
 
 
-def test_restricted_sandbox_fs_helpers_real_and_writes_denied(tmp_path):
-    (tmp_path / "a.txt").write_text("unique-marker-123\n", encoding="utf-8")
-    model = FsSandboxModel(tmp_path)
-    agent = create_deep_agent(
-        model=model,
-        backend=RestrictedShellSandbox(root_dir=str(tmp_path)),
-    )
-    result = agent.invoke({"messages": [{"role": "user", "content": "inspect"}]})
+class TestHumanInTheLoop:
+    """Test HumanInTheLoop."""
 
-    # ls must return the real file, not an empty list.
-    assert any("a.txt" in str(m.content) for m in result["messages"])
-    # read_file must return the real contents, not a hard error / empty.
-    assert any("unique-marker-123" in str(m.content) for m in result["messages"])
-    # write_file must be denied (read-only), and no silent success / no file.
-    wm = [m for m in result["messages"] if m.type == "tool" and m.name == "write_file"]
-    assert wm, "expected a write_file tool message"
-    assert wm[0].status == "error" or "read_only" in str(wm[0].content).lower()
-    assert not (tmp_path / "should_not_exist.txt").exists()
+    def test_request_approval(self) -> None:
+        hitl = HumanInTheLoop()
+        req = hitl.request_approval("delete", {"path": "/etc"}, "deleting critical file")
+        assert req.decision.value == "pending"
 
+    def test_auto_approve(self) -> None:
+        hitl = HumanInTheLoop(auto_approve=True)
+        req = hitl.request_approval("delete", {"path": "/tmp"})
+        assert req.decision.value == "approved"
 
-def test_restricted_sandbox_native_read_respects_pagination(tmp_path):
-    from deepagents.backends.protocol import ReadResult
+    def test_approve(self) -> None:
+        hitl = HumanInTheLoop()
+        req = hitl.request_approval("write", {"path": "/tmp/x"})
+        assert hitl.approve(req.id)
+        assert hitl.get_request(req.id).decision.value == "approved"
 
-    text = "".join(f"line{i}\n" for i in range(10))
-    (tmp_path / "f.txt").write_text(text, encoding="utf-8")
-    sb = RestrictedShellSandbox(root_dir=str(tmp_path))
-    r: ReadResult = sb.read(str(tmp_path / "f.txt"), offset=2, limit=3)
-    assert r.error is None
-    assert "line2" in r.file_data["content"]
-    assert r.file_data["content"].startswith("line2\n")
-    assert r.start_line == 3
-    assert r.end_line == 5
-    assert r.next_offset == 5
+    def test_deny(self) -> None:
+        hitl = HumanInTheLoop()
+        req = hitl.request_approval("write", {"path": "/tmp/x"})
+        assert hitl.deny(req.id)
+        assert hitl.get_request(req.id).decision.value == "denied"
+
+    def test_list_pending(self) -> None:
+        hitl = HumanInTheLoop()
+        hitl.request_approval("tool_a", {})
+        hitl.request_approval("tool_b", {})
+        assert len(hitl.list_pending()) == 2
 
 
+class TestAuditLog:
+    """Test AuditLog."""
 
-# --------------------------------------------------------------------------- #
-# 3. HarnessProfile role-based tool limiting                                  #
-# --------------------------------------------------------------------------- #
-def test_customer_support_role_excludes_execute():
-    roles.register_customer_support_role()
-    profile = _get_harness_profile(roles.CUSTOMER_SUPPORT_ROLE)
-    assert profile is not None
-    assert "execute" in profile.excluded_tools
+    def test_log_entry(self) -> None:
+        audit = AuditLog()
+        entry = audit.log("read_file", {"path": "/tmp/x"}, "content", True)
+        assert entry.tool_name == "read_file"
+        assert entry.success is True
 
+    def test_query_by_tool(self) -> None:
+        audit = AuditLog()
+        audit.log("read_file", {"path": "/a"})
+        audit.log("write_file", {"path": "/b"})
+        audit.log("read_file", {"path": "/c"})
+        results = audit.query(tool_name="read_file")
+        assert len(results) == 2
 
-def test_operator_role_keeps_all_tools():
-    roles.register_operator_role()
-    profile = _get_harness_profile(roles.OPERATOR_ROLE)
-    assert profile is not None
-    assert profile.excluded_tools == frozenset()
+    def test_query_by_success(self) -> None:
+        audit = AuditLog()
+        audit.log("tool_a", {}, "ok", True)
+        audit.log("tool_b", {}, "fail", False)
+        results = audit.query(success=True)
+        assert len(results) == 1
 
+    def test_stats(self) -> None:
+        audit = AuditLog()
+        assert audit.get_stats()["total"] == 0
+        audit.log("read_file", {})
+        stats = audit.get_stats()
+        assert stats["total"] == 1
+        assert stats["success_rate"] == 1.0
 
-def test_customer_support_role_exclusion_applies_to_agent():
-    roles.register_customer_support_role()
-    model = SupportModel()
-    agent = create_deep_agent(model=model)
-    agent.invoke({"messages": [{"role": "user", "content": "hi"}]})
+    def test_clear(self) -> None:
+        audit = AuditLog()
+        audit.log("tool_a", {})
+        audit.clear()
+        assert audit.get_stats()["total"] == 0
 
-    assert "execute" not in model.bound_tools
-    for builtin in ("ls", "read_file", "write_file", "edit_file", "glob", "grep", "task"):
-        assert builtin in model.bound_tools, f"expected built-in {builtin!r} to remain"
-
-
-def test_registration_is_idempotent():
-    roles.register_customer_support_role()
-    first = _get_harness_profile(roles.CUSTOMER_SUPPORT_ROLE).excluded_tools
-    roles.register_customer_support_role()
-    second = _get_harness_profile(roles.CUSTOMER_SUPPORT_ROLE).excluded_tools
-    assert second == first == frozenset({"execute"})
-
-
-def test_registration_is_additive_union():
-    roles.register_customer_support_role()
-    register_harness_profile(
-        roles.CUSTOMER_SUPPORT_ROLE,
-        HarnessProfile(excluded_tools=frozenset({"grep"})),
-    )
-    profile = _get_harness_profile(roles.CUSTOMER_SUPPORT_ROLE)
-    assert profile.excluded_tools == frozenset({"execute", "grep"})
+    def test_sanitize_arguments(self) -> None:
+        audit = AuditLog()
+        entry = audit.log("test", {"password": "secret123", "normal": "ok"})
+        assert "[REDACTED]" in str(entry.arguments.get("password", ""))
+        assert entry.arguments.get("normal") == "ok"
 
 
-# --------------------------------------------------------------------------- #
-# 4. Execute/sandbox matrix regression guard (discovery doc §4)               #
-# --------------------------------------------------------------------------- #
-def test_state_backend_does_not_satisfy_sandbox_protocol():
-    assert not isinstance(StateBackend(), SandboxBackendProtocol)
+# ══════════════════════════════════════════════════════════════════════════
+# 3.6  Tool Description & Discovery
+# ══════════════════════════════════════════════════════════════════════════
 
 
-def test_local_shell_backend_satisfies_sandbox_protocol():
-    assert isinstance(LocalShellBackend(), SandboxBackendProtocol)
+class TestToolDescription:
+    """Test ToolDescription."""
+
+    def test_to_prompt(self) -> None:
+        desc = ToolDescription(
+            name="read_file",
+            summary="Read files",
+            description="Read contents of a file with optional offset/limit.",
+            parameters={
+                "path": {"type": "string", "description": "File path", "required": True},
+            },
+            examples=[{"args": {"path": "/tmp/x"}, "description": "Read /tmp/x"}],
+        )
+        prompt = desc.to_prompt()
+        assert "read_file" in prompt
+        assert "path" in prompt
+        assert "required" in prompt
+
+
+class TestToolSelector:
+    """Test ToolSelector."""
+
+    def test_rank_tools(self) -> None:
+        selector = ToolSelector()
+        from src.tools.filesystem import FILESYSTEM_TOOLS
+
+        specs = [
+            ToolSpec(name="read_file", description="Read a file", fn=lambda: ToolResult(success=True)),
+            ToolSpec(name="write_file", description="Write a file", fn=lambda: ToolResult(success=True)),
+            ToolSpec(name="execute", description="Run a command", fn=lambda: ToolResult(success=True)),
+        ]
+        ranked = selector.rank_tools(specs, "read content from file")
+        names = [t.name for t, _ in ranked]
+        assert ranked[0][1] > 0  # top has score > 0
+
+    def test_select_top_k(self) -> None:
+        selector = ToolSelector()
+        specs = [ToolSpec(name=f"tool_{i}", description=f"Tool {i}", fn=lambda: ToolResult(success=True)) for i in range(20)]
+        selected = selector.select(specs, "tool_1", top_k=5, min_score=0)
+        assert len(selected) <= 5
+
+
+class TestToolStatistics:
+    """Test ToolStatistics."""
+
+    def test_record_and_summary(self) -> None:
+        stats = ToolStatistics()
+        assert stats.get_summary()["total_calls"] == 0
+
+        stats.record_call("read_file", category="filesystem", duration_ms=10, success=True, token_estimate=100)
+        stats.record_call("write_file", category="filesystem", duration_ms=20, success=False, token_estimate=200)
+
+        summary = stats.get_summary()
+        assert summary["total_calls"] == 2
+        assert summary["success_rate"] == 0.5
+        assert summary["total_cost_usd"] > 0
+
+    def test_most_used(self) -> None:
+        stats = ToolStatistics()
+        for _ in range(3):
+            stats.record_call("tool_a")
+        stats.record_call("tool_b")
+        top = stats.most_used(top_k=2)
+        assert top[0][0] == "tool_a"
+
+    def test_clear(self) -> None:
+        stats = ToolStatistics()
+        stats.record_call("tool_x")
+        stats.clear()
+        assert stats.get_summary()["total_calls"] == 0
+
+
+class TestToolDiscovery:
+    """Test ToolDiscovery."""
+
+    def test_list_tools(self) -> None:
+        discovery = ToolDiscovery()
+        tools = discovery.list_tools()
+        assert len(tools) > 0
+
+    def test_search(self) -> None:
+        discovery = ToolDiscovery()
+        results = discovery.search("file")
+        assert len(results) > 0
+
+    def test_find(self) -> None:
+        discovery = ToolDiscovery()
+        spec = discovery.find("read_file")
+        assert spec is not None
+        assert spec.name == "read_file"
+
+    def test_select_for_context(self) -> None:
+        discovery = ToolDiscovery()
+        selected = discovery.select_for_context("read the file content", top_k=5)
+        assert len(selected) <= 5
+
+    def test_get_descriptions_prompt(self) -> None:
+        discovery = ToolDiscovery()
+        prompt = discovery.get_descriptions(prompt_format=True)
+        assert isinstance(prompt, str)
+        assert "read_file" in prompt

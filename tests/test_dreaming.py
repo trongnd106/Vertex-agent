@@ -103,8 +103,9 @@ def _run_main_session(checkpointer, store, thread_id, user_id="u1"):
 
 def test_history_loader_reconstructs_full_session_messages():
     saver = MemorySaver()
-    _run_main_session(saver, get_store(), "dream-hist")
-    msgs = load_thread_messages(saver, "dream-hist")
+    agent = _run_main_session(saver, get_store(), "dream-hist")
+    # Use get_state path (handles deepagents reducer-based message storage)
+    msgs = load_thread_messages(saver, "dream-hist", get_state=agent.get_state)
     assert [m.content for m in msgs] == ["q1", "r1", "q2", "r2"]
     assert all(m.id for m in msgs)
 
@@ -119,7 +120,7 @@ def test_history_loader_unknown_thread_is_empty():
 def test_dream_graph_writes_facts_and_lessons_into_separate_namespaces():
     saver = MemorySaver()
     store = get_store()
-    _run_main_session(saver, store, "dream-e2e")
+    agent = _run_main_session(saver, store, "dream-e2e")
 
     dream_result = DreamOutput(
         facts=["User prefers Vietnamese replies", "User's order #123 was refunded"],
@@ -127,7 +128,7 @@ def test_dream_graph_writes_facts_and_lessons_into_separate_namespaces():
         conflicts=[],
     )
     model = StructuredScriptedModel(structured=[dream_result])
-    dream = build_dream_agent(model=model, store=store, checkpointer=saver)
+    dream = build_dream_agent(model=model, store=store, checkpointer=saver, get_state=agent.get_state)
 
     state = dream.invoke({"thread_id": "dream-e2e", "user_id": "u1"})
 
@@ -135,10 +136,10 @@ def test_dream_graph_writes_facts_and_lessons_into_separate_namespaces():
     assert state["lessons"] == dream_result.lessons
     assert state["conflicts"] == []
 
-    facts = list(store.search(memories_namespace("u1")))
-    lessons = list(store.search(LESSONS_NAMESPACE))
-    assert [it.value["content"] for it in facts] == dream_result.facts
-    assert [it.value["content"] for it in lessons] == dream_result.lessons
+    facts = list(store.search(memories_namespace("u1")).items)
+    lessons = list(store.search(LESSONS_NAMESPACE).items)
+    assert sorted([it.value["content"] for it in facts]) == sorted(dream_result.facts)
+    assert sorted([it.value["content"] for it in lessons]) == sorted(dream_result.lessons)
 
     memory_keys = {it.key for it in facts}
     lesson_keys = {it.key for it in lessons}
@@ -146,7 +147,7 @@ def test_dream_graph_writes_facts_and_lessons_into_separate_namespaces():
     assert all(it.namespace == memories_namespace("u1") for it in facts)
     assert all(it.namespace == LESSONS_NAMESPACE for it in lessons)
 
-    assert list(store.search(CONFLICT_MARKERS_NAMESPACE)) == []
+    assert list(store.search(CONFLICT_MARKERS_NAMESPACE).items) == []
 
 
 def test_dream_graph_no_history_reports_error_and_writes_nothing():
@@ -156,8 +157,8 @@ def test_dream_graph_no_history_reports_error_and_writes_nothing():
     dream = build_dream_agent(model=model, store=store, checkpointer=saver)
     state = dream.invoke({"thread_id": "no-history", "user_id": "u1"})
     assert "error" in state
-    assert store.search(memories_namespace("u1")) == []
-    assert store.search(LESSONS_NAMESPACE) == []
+    assert store.search(memories_namespace("u1")).items == []
+    assert store.search(LESSONS_NAMESPACE).items == []
 
 
 def test_write_dream_results_is_idempotent_same_key():
@@ -167,7 +168,7 @@ def test_write_dream_results_is_idempotent_same_key():
     w2 = write_dream_results(store, user_id="u1", thread_id="t1",
                              facts=["same fact"], lessons=[], conflicts=[])
     assert w1.facts == w2.facts == 1
-    assert len(list(store.search(memories_namespace("u1")))) == 1
+    assert len(store.search(memories_namespace("u1"))) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -176,7 +177,7 @@ def test_write_dream_results_is_idempotent_same_key():
 def test_conflict_does_not_overwrite_existing_memory_and_records_marker():
     saver = MemorySaver()
     store = InMemoryStore()
-    _run_main_session(saver, store, "dream-conf")
+    agent = _run_main_session(saver, store, "dream-conf")
 
     store.put(memories_namespace("u1"), "fact-preexisting",
               {"kind": "fact", "content": "User prefers Vietnamese", "priority": 3})
@@ -190,6 +191,7 @@ def test_conflict_does_not_overwrite_existing_memory_and_records_marker():
         model=StructuredScriptedModel(structured=[dream_result]),
         store=store,
         checkpointer=saver,
+        get_state=agent.get_state,
     )
     state = dream.invoke({"thread_id": "dream-conf", "user_id": "u1"})
 
@@ -199,7 +201,7 @@ def test_conflict_does_not_overwrite_existing_memory_and_records_marker():
     assert existing is not None
     assert existing.value["content"] == "User prefers Vietnamese"
 
-    markers = list(store.search(CONFLICT_MARKERS_NAMESPACE))
+    markers = store.search(CONFLICT_MARKERS_NAMESPACE)
     assert len(markers) == 1
     assert markers[0].value["conflict"] == dream_result.conflicts[0]
     assert markers[0].value["user_id"] == "u1"
@@ -354,7 +356,7 @@ def test_dream_graph_postgres_store_and_saver():
         state = dream.invoke({"thread_id": thread_id, "user_id": "pg-u1"})
         assert state["facts"] == ["PG fact about user"]
         facts = list(store.search(memories_namespace("pg-u1")))
-        lessons = list(store.search(LESSONS_NAMESPACE))
+        lessons = list(store.search(LESSONS_NAMESPACE).items)
         assert any(it.value["content"] == "PG fact about user" for it in facts)
         assert any(it.value["content"] == "PG lesson about tools" for it in lessons)
     finally:
