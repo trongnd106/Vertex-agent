@@ -1,0 +1,209 @@
+[
+  {
+    "problem": "32 + 1 = ?",
+    "steps": [
+      {"step": 1, "x": 2, "b": 1, "technique": "KCT", "lesson": 1, "A": 32, "B": 1, "R": 33}
+    ],
+    "final_result": 33,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 1 (+ b=1 KCT)"
+  },
+  {
+    "problem": "84 + 2 = ?",
+    "steps": [
+      {"step": 1, "x": 4, "b": 2, "technique": "BN", "lesson": 2, "A": 84, "B": 2, "R": 86}
+    ],
+    "final_result": 86,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 2 (+ b=2 BN)"
+  },
+  {
+    "problem": "56 + 3 = ?",
+    "steps": [
+      {"step": 1, "x": 6, "b": 3, "technique": "KCT", "lesson": 3, "A": 56, "B": 3, "R": 59}
+    ],
+    "final_result": 59,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 3 (+ b=3 KCT)"
+  },
+  {
+    "problem": "71 + 4 = ?",
+    "steps": [
+      {"step": 1, "x": 1, "b": 4, "technique": "BN", "lesson": 4, "A": 71, "B": 4, "R": 75}
+    ],
+    "final_result": 75,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 4 (+ b=4 BN)"
+  },
+  {
+    "problem": "34 + 5 = ?",
+    "steps": [
+      {"step": 1, "x": 4, "b": 5, "technique": "KCT", "lesson": 5, "A": 34, "B": 5, "R": 39}
+    ],
+    "final_result": 39,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 5 (+ b=5 KCT)"
+  },
+  {
+    "problem": "12 + 6 = ?",
+    "steps": [
+      {"step": 1, "x": 2, "b": 6, "technique": "KCT", "lesson": 6, "A": 12, "B": 6, "R": 18}
+    ],
+    "final_result": 18,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 6 (+ b=6 KCT)"
+  },
+  {
+    "problem": "52 + 7 = ?",
+    "steps": [
+      {"step": 1, "x": 2, "b": 7, "technique": "KCT", "lesson": 7, "A": 52, "B": 7, "R": 59}
+    ],
+    "final_result": 59,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 7 (+ b=7 KCT)"
+  },
+  {
+    "problem": "21 + 8 = ?",
+    "steps": [
+      {"step": 1, "x": 1, "b": 8, "technique": "KCT", "lesson": 8, "A": 21, "B": 8, "R": 29}
+    ],
+    "final_result": 29,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 8 (+ b=8 KCT)"
+  },
+  {
+    "problem": "81 + 9 = ?",
+    "steps": [
+      {"step": 1, "x": 1, "b": 9, "technique": "BL", "lesson": 9, "A": 81, "B": 9, "R": 90}
+    ],
+    "final_result": 90,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 9 (+ b=9 BL)"
+  },
+  {
+    "problem": "47 − 1 = ?",
+    "steps": [
+      {"step": 1, "x": 7, "b": 1, "technique": "KCT", "lesson": 10, "A": 47, "B": 1, "R": 46}
+    ],
+    "final_result": 46,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 10 (− b=1 KCT)"
+  },
+  {
+    "problem": "50 − 1 = ?",
+    "steps": [
+      {"step": 1, "x": 0, "b": 1, "technique": "BL", "lesson": 10, "A": 50, "B": 1, "R": 49}
+    ],
+    "final_result": 49,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 10 (− b=1 BL, A=50≥10✓)"
+  },
+  {
+    "problem": "85 − 2 = ?",
+    "steps": [
+      {"step": 1, "x": 5, "b": 2, "technique": "BN", "lesson": 11, "A": 85, "B": 2, "R": 83}
+    ],
+    "final_result": 83,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 11 (− b=2 BN)"
+  },
+  {
+    "problem": "31 − 2 = ?",
+    "steps": [
+      {"step": 1, "x": 1, "b": 2, "technique": "BL", "lesson": 11, "A": 31, "B": 2, "R": 29}
+    ],
+    "final_result": 29,
+    "num_operands": 2,
+    "num_digits": 2,
+    "coverage": "Lesson 11 (− b=2 BL, A=31≥10✓)"
+  },
+  {
+    "problem": "41 + 25 + 33 = ?",
+    "steps": [
+      {"step": 1, "x": 1, "b": 5, "technique": "KCT", "lesson": 5, "A": 41, "B": 25, "R": 66},
+      {"step": 2, "x": 6, "b": 3, "technique": "KCT", "lesson": 3, "A": 66, "B": 33, "R": 99}
+    ],
+    "final_result": 99,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 5 (+ b=5 KCT), Lesson 3 (+ b=3 KCT)"
+  },
+  {
+    "problem": "59 + 3 + 25 = ?",
+    "steps": [
+      {"step": 1, "x": 9, "b": 3, "technique": "BL", "lesson": 3, "A": 59, "B": 3, "R": 62},
+      {"step": 2, "x": 2, "b": 5, "technique": "KCT", "lesson": 5, "A": 62, "B": 25, "R": 87}
+    ],
+    "final_result": 87,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 3 (+ b=3 BL), Lesson 5 (+ b=5 KCT)"
+  },
+  {
+    "problem": "43 + 24 + 32 = ?",
+    "steps": [
+      {"step": 1, "x": 3, "b": 4, "technique": "BN", "lesson": 4, "A": 43, "B": 24, "R": 67},
+      {"step": 2, "x": 7, "b": 2, "technique": "KCT", "lesson": 2, "A": 67, "B": 32, "R": 99}
+    ],
+    "final_result": 99,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 4 (+ b=4 BN), Lesson 2 (+ b=2 KCT)"
+  },
+  {
+    "problem": "65 − 1 + 13 = ?",
+    "steps": [
+      {"step": 1, "x": 5, "b": 1, "technique": "BN", "lesson": 10, "A": 65, "B": 1, "R": 64},
+      {"step": 2, "x": 4, "b": 3, "technique": "BN", "lesson": 3, "A": 64, "B": 13, "R": 77}
+    ],
+    "final_result": 77,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 10 (− b=1 BN), Lesson 3 (+ b=3 BN)"
+  },
+  {
+    "problem": "53 + 17 + 25 = ?",
+    "steps": [
+      {"step": 1, "x": 3, "b": 7, "technique": "BL", "lesson": 7, "A": 53, "B": 17, "R": 70},
+      {"step": 2, "x": 0, "b": 5, "technique": "KCT", "lesson": 5, "A": 70, "B": 25, "R": 95}
+    ],
+    "final_result": 95,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 7 (+ b=7 BL), Lesson 5 (+ b=5 KCT)"
+  },
+  {
+    "problem": "68 + 11 − 12 = ?",
+    "steps": [
+      {"step": 1, "x": 8, "b": 1, "technique": "KCT", "lesson": 1, "A": 68, "B": 11, "R": 79},
+      {"step": 2, "x": 9, "b": 2, "technique": "KCT", "lesson": 11, "A": 79, "B": 12, "R": 67}
+    ],
+    "final_result": 67,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 1 (+ b=1 KCT), Lesson 11 (− b=2 KCT)"
+  },
+  {
+    "problem": "53 + 19 + 27 = ?",
+    "steps": [
+      {"step": 1, "x": 3, "b": 9, "technique": "BL", "lesson": 9, "A": 53, "B": 19, "R": 72},
+      {"step": 2, "x": 2, "b": 7, "technique": "KCT", "lesson": 7, "A": 72, "B": 27, "R": 99}
+    ],
+    "final_result": 99,
+    "num_operands": 3,
+    "num_digits": 2,
+    "coverage": "Lesson 9 (+ b=9 BL), Lesson 7 (+ b=7 KCT)"
+  }
+]
