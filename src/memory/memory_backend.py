@@ -28,12 +28,14 @@ behaviour tested in `tests/test_long_term_memory.py`.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from langgraph.store.base import BaseStore
 
-from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.filesystem import FilesystemBackend
-from deepagents.backends.store import NamespaceFactory, StoreBackend
+if TYPE_CHECKING:
+    from deepagents.backends.composite import CompositeBackend
+    from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.backends.store import NamespaceFactory, StoreBackend
 
 MEMORY_ROUTE = "/memory/"
 """Path prefix that routes into the Store-backed long-term memory."""
@@ -48,24 +50,24 @@ class UserContext:
 
     Probing showed a ``dataclass`` (not a plain ``TypedDict``) is required for
     ``runtime.context.user_id`` attribute access: LangGraph coerces a dict
-    context value into the class only when the schema is a BaseModel/dataclass
-    (``langgraph/pregel/main.py::_coerce_context``). The context value is passed
-    per invoke as ``invoke(..., context=UserContext(user_id=...))``.
+    back into the schema type, and a ``TypedDict`` produces a plain ``dict``
+    with no attribute access. A ``dataclass`` preserves attribute access.
     """
 
     user_id: str
 
 
-#: Context ``schema``: pass this to ``create_deep_agent``/``build_agent``.
 USER_CONTEXT_SCHEMA: type[UserContext] = UserContext
+"""Re-export for use as ``context_schema`` in ``create_deep_agent``."""
 
-#: Which user-isolation mode is active. ``True`` = context-schema multi-user
+
+#: Live-probe result: ``runtime.context.user_id`` is populated for multi-user
 #: namespaces ``("memories", user_id)`` (live-probe verified); a fixed-user
 #: fallback was NOT needed.
 MULTI_USER = True
 
 
-def make_namespace_factory() -> NamespaceFactory:
+def make_namespace_factory() -> "NamespaceFactory":
     """Return the per-user namespace factory used by the ``/memory/`` Store.
 
     The factory reads ``runtime.context.user_id`` and emits the plan's
@@ -95,9 +97,9 @@ def make_namespace_factory() -> NamespaceFactory:
 
 
 def build_memory_filesystem(
-    user_id_resolver: NamespaceFactory | None = None,
+    user_id_resolver: "NamespaceFactory | None" = None,
     store: BaseStore | None = None,
-) -> CompositeBackend:
+) -> "CompositeBackend":
     """Assemble the agent filesystem: disk default + Store-backed ``/memory/``.
 
     Args:
@@ -113,6 +115,10 @@ def build_memory_filesystem(
         A ``CompositeBackend`` routing ``/memory/*`` into the Store and every
         other path (e.g. ``/skills/*``) to the on-disk ``FilesystemBackend``.
     """
+    from deepagents.backends.composite import CompositeBackend
+    from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.backends.store import StoreBackend
+
     store_backend = StoreBackend(
         namespace=user_id_resolver or make_namespace_factory(),
         store=store,

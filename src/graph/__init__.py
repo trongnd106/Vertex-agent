@@ -1,7 +1,7 @@
 """Vertex Agent Graph System — a powerful agent graph framework.
 
 Built on the insights from LangGraph's Pregel algorithm, deepagents'
-middleware architecture, and orchestrator's task-driven design.
+middleware architecture, and chatbot-orchestrator's task-driven design.
 
 ## Package Structure
 

@@ -25,7 +25,6 @@ bare server boot succeed.
 
 from __future__ import annotations
 
-from src.agent.graph import build_agent
 from src.agent.system_prompt import build_system_prompt as _build_system_prompt
 from src.config import config
 
@@ -57,9 +56,14 @@ def _model_from_env() -> str:
 
 
 def _build_graph():
-    """Compile the agent graph bound to the configured model (import-time)."""
+    """Compile the agent graph bound to the configured model (import-time).
+
+    Returns a compiled ``StateGraph`` on success, or a minimal echo graph
+    as fallback when the real agent fails (no LLM key, broken skills, etc.).
+    """
+    import importlib  # lazy: deepagents may not be installed
+
     model = _model_from_env()
-    # Parse provider:model from the model string
     provider_name = config.LLM_PROVIDER or "OpenAI"
     model_name = model.split(":", 1)[1] if ":" in model else model
     system_prompt = _build_system_prompt(
@@ -68,38 +72,45 @@ def _build_graph():
         show_env_hints=True,
     )
     try:
-        return build_agent(model=model, system_prompt=system_prompt)
-    except Exception:
-        # Import-time module-level fallback: langgraph validate requires a
-        # module-level ``graph`` even when nothing is configured.
-        logger = __import__("logging").getLogger(__name__)
-        logger.warning("Agent graph build failed; using stub", exc_info=True)
-        from langgraph.graph import MessagesState, StateGraph
+        graph_mod = importlib.import_module("src.agent.graph")
+        build_fn = getattr(graph_mod, "build_agent")
+        return build_fn(model=model, system_prompt=system_prompt)
+    except Exception as exc:
+        logger = importlib.import_module("logging").getLogger(__name__)
+        logger.warning("Agent graph build failed (%s); using stub echo graph", exc)
+        return _build_stub_graph()
 
-        async def _stub(state: MessagesState) -> MessagesState:
-            return state
 
-        stub = StateGraph(MessagesState)
-        stub.add_node("stub", _stub)
-        stub.set_entry_point("stub")
-        return stub.compile()
+def _build_stub_graph():
+    """Build a minimal stub graph that echoes user messages.
+
+    This lets the API server start and respond even when the real agent
+    cannot be compiled (missing deepagents, no LLM key, etc.).
+    """
+    from langchain_core.messages import AIMessage
+    from langgraph.graph import MessagesState, StateGraph
+
+    async def echo_node(state: MessagesState) -> MessagesState:
+        user_msgs = [m for m in state.get("messages", []) if getattr(m, "role", "") == "user"]
+        last = user_msgs[-1] if user_msgs else None
+        if last:
+            content = getattr(last, "content", "")
+            return {"messages": [AIMessage(content=f"[Stub] Received: {content[:200]}")]}
+        return state
+
+    stub = StateGraph(MessagesState)
+    stub.add_node("echo", echo_node)
+    stub.set_entry_point("echo")
+    return stub.compile()
 
 
 #: Module-level compiled graph — what ``langgraph.json``'s ``graphs`` entry
 #: references as ``./src/agent/server.py:graph``.
 try:
     graph = _build_graph()
-except Exception:
+except Exception as exc:
     logger = __import__("logging").getLogger(__name__)
-    logger.warning("Falling back to stub graph (no real model or skills)", exc_info=True)
-    from langgraph.graph import MessagesState, StateGraph
-
-    async def _stub(state: MessagesState) -> MessagesState:
-        return state
-
-    stub = StateGraph(MessagesState)
-    stub.add_node("stub", _stub)
-    stub.set_entry_point("stub")
-    graph = stub.compile()
+    logger.warning("Top-level graph build failed (%s); using stub", exc)
+    graph = _build_stub_graph()
 
 __all__ = ["DEFAULT_MODEL", "graph"]

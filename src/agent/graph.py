@@ -140,8 +140,17 @@ def build_agent(
     middleware: list[Any] = []
     if enqueue is not None:
         middleware.append(EnqueueAfterTurnMiddleware(enqueue))
+
+    if isinstance(model, BaseChatModel):
+        _model = model
+    else:
+        from deepagents._models import resolve_model as _resolve_model
+        _model = _resolve_model(str(model))
+        if hasattr(_model, "use_responses_api"):
+            _model.use_responses_api = False
+
     return create_deep_agent(
-        model=model,
+        model=_model,
         tools=list(tools),
         system_prompt=system_prompt,
         skills=resolved_skills or ["/skills/"],
