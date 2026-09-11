@@ -7,16 +7,21 @@ Endpoints:
 - ``POST /state/{thread_id}`` — update thread state (interrupt resume)
 - ``GET /health`` — health check
 - ``GET /metrics`` — runtime metrics
+- ``GET /conversations`` — list conversations for a user
+- ``DELETE /conversations/{thread_id}`` — delete a conversation
+- ``PATCH /conversations/{thread_id}`` — update conversation metadata (title)
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from src.config import config
 from typing import Annotated, Any
@@ -30,6 +35,69 @@ from src.api.rate_limit import RateLimiter
 from src.memory.memory_backend import UserContext
 
 logger = logging.getLogger(__name__)
+
+
+# ── In-memory conversation store ─────────────────────────
+
+
+@dataclass
+class ConversationRecord:
+    """A conversation / thread record."""
+    thread_id: str
+    user_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+    messages: list[dict] = field(default_factory=list)
+
+
+class ConversationStore:
+    """Thread-safe in-memory store for conversation metadata.
+
+    Falls back to in-memory when no Postgres is available.
+    Later this can be backed by the LangGraph checkpointer.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._conversations: dict[str, ConversationRecord] = {}
+
+    def upsert(self, record: ConversationRecord) -> None:
+        with self._lock:
+            existing = self._conversations.get(record.thread_id)
+            if existing:
+                existing.title = record.title
+                existing.updated_at = record.updated_at
+                existing.message_count = max(existing.message_count, record.message_count)
+                # Append new messages — deduplicate by content + role to avoid dupes
+                seen = set()
+                for m in existing.messages:
+                    seen.add((m.get("role", ""), m.get("content", "")))
+                for m in record.messages:
+                    key = (m.get("role", ""), m.get("content", ""))
+                    if key not in seen:
+                        existing.messages.append(m)
+                        seen.add(key)
+            else:
+                self._conversations[record.thread_id] = record
+
+    def list_by_user(self, user_id: str) -> list[ConversationRecord]:
+        with self._lock:
+            convs = [c for c in self._conversations.values() if c.user_id == user_id]
+            convs.sort(key=lambda c: c.updated_at, reverse=True)
+            return convs
+
+    def get(self, thread_id: str) -> ConversationRecord | None:
+        with self._lock:
+            return self._conversations.get(thread_id)
+
+    def delete(self, thread_id: str) -> bool:
+        with self._lock:
+            if thread_id in self._conversations:
+                del self._conversations[thread_id]
+                return True
+            return False
 
 
 # ── Pydantic models ───────────────────────────────────────────────────
@@ -77,6 +145,9 @@ class ServerState:
 
 server_state = ServerState()
 
+#: Global conversation metadata store (in-memory, ephemeral).
+conversation_store = ConversationStore()
+
 
 # ── Lifespan ──────────────────────────────────────────────────────────
 
@@ -89,9 +160,14 @@ async def lifespan(app: FastAPI):
 
     # Import the compiled graph (lazy, so server.py doesn't need LLM keys at import)
     try:
-        from src.agent.server import graph
-        server_state.graph = graph
-        logger.info("Agent graph loaded successfully")
+        import importlib
+        mod = importlib.import_module("src.agent.server")
+        graph = getattr(mod, "graph", None)
+        if graph is not None:
+            server_state.graph = graph
+            logger.info("Agent graph loaded successfully (%s)", type(graph).__name__)
+        else:
+            logger.warning("Agent server module has no 'graph' attribute")
     except Exception as exc:
         logger.warning("Agent graph not available at startup: %s", exc)
         server_state.graph = None
@@ -222,12 +298,55 @@ def create_app() -> FastAPI:
             last_message = messages[-1] if messages else {}
             # AIMessage objects → dict
             last_content = last_message.content if hasattr(last_message, "content") else last_message.get("content", "")
-            messages_out = []
-            for m in messages[-5:]:
-                if hasattr(m, "content"):
-                    messages_out.append({"role": getattr(m, "role", ""), "content": m.content})
+            def _role(msg: Any) -> str:
+                """Map message type to 'user' | 'assistant'."""
+                if hasattr(msg, "type"):
+                    t = msg.type
+                elif isinstance(msg, dict):
+                    t = msg.get("type", "")
                 else:
-                    messages_out.append({"role": m.get("role", ""), "content": m.get("content", "")})
+                    t = ""
+                return {"human": "user", "ai": "assistant", "user": "user", "assistant": "assistant"}.get(t, t or "user")
+
+            messages_out = []
+            for m in messages:
+                role = _role(m)
+                # Filter out internal messages (tool calls, skill loading, thinking)
+                if role == "tool":
+                    continue
+                content = m.content if hasattr(m, "content") else (m.get("content", "") if isinstance(m, dict) else "")
+                messages_out.append({"role": role, "content": content})
+
+            # Deduplicate sequential assistant messages — keep only the last one
+            # (internal thinking like "I'll read the skill" → final response)
+            filtered = []
+            i = 0
+            while i < len(messages_out):
+                if messages_out[i]["role"] == "assistant":
+                    # Find the last consecutive assistant message
+                    last_assistant = i
+                    while last_assistant + 1 < len(messages_out) and messages_out[last_assistant + 1]["role"] == "assistant":
+                        last_assistant += 1
+                    # Keep only the last assistant message in a sequence
+                    filtered.append(messages_out[last_assistant])
+                    i = last_assistant + 1
+                else:
+                    filtered.append(messages_out[i])
+                    i += 1
+            messages_out = filtered
+
+            # Auto-save conversation messages + metadata
+            title = request.message[:40] + ("..." if len(request.message) > 40 else "")
+            conversation_store.upsert(ConversationRecord(
+                thread_id=request.thread_id,
+                user_id=request.user_id,
+                title=title,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                message_count=len(messages) // 2,  # approx turns
+                messages=messages_out,
+            ))
+
             return {
                 "thread_id": request.thread_id,
                 "response": last_content,
@@ -311,6 +430,61 @@ def create_app() -> FastAPI:
             return {"thread_id": thread_id, "status": "updated"}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
+
+    # ── Conversation (history) endpoints ─────────────────────────────────
+
+    @app.get("/conversations")
+    async def list_conversations(user_id: str = Query("anonymous")):
+        """List all conversations for a user, newest first."""
+        convs = conversation_store.list_by_user(user_id)
+        return [
+            {
+                "thread_id": c.thread_id,
+                "title": c.title,
+                "created_at": c.created_at.isoformat(),
+                "updated_at": c.updated_at.isoformat(),
+                "message_count": c.message_count,
+            }
+            for c in convs
+        ]
+
+    @app.get("/conversations/{thread_id}")
+    async def get_conversation(thread_id: str):
+        """Get conversation details including messages."""
+        record = conversation_store.get(thread_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {
+            "thread_id": record.thread_id,
+            "title": record.title,
+            "created_at": record.created_at.isoformat(),
+            "updated_at": record.updated_at.isoformat(),
+            "message_count": record.message_count,
+            "messages": record.messages,
+        }
+
+    @app.delete("/conversations/{thread_id}")
+    async def delete_conversation(thread_id: str):
+        """Delete a conversation record."""
+        if conversation_store.delete(thread_id):
+            return {"status": "deleted", "thread_id": thread_id}
+        # Still return success — record may have already been cleaned up
+        return {"status": "not_found", "thread_id": thread_id}
+
+    @app.patch("/conversations/{thread_id}")
+    async def update_conversation(thread_id: str, request: Request):
+        """Update conversation metadata (e.g. rename title)."""
+        body = await request.json()
+        title = body.get("title", "")
+        if not title:
+            raise HTTPException(status_code=400, detail="title is required")
+        record = conversation_store.get(thread_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Conversation '{thread_id}' not found")
+        record.title = title
+        record.updated_at = datetime.now(timezone.utc)
+        conversation_store.upsert(record)
+        return {"status": "updated", "thread_id": thread_id}
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):

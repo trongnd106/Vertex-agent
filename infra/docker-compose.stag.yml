@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: hub.vtcc.vn:8989/pgvector/pgvector:pg16
+    container_name: deepagents-postgres
+    environment:
+      POSTGRES_USER: deepagents
+      POSTGRES_PASSWORD: deepagents
+      POSTGRES_DB: deepagents
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepagents -d deepagents"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+  redis:
+    image: hub.vtcc.vn:8989/redis:7-alpine
+    container_name: deepagents-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    profiles:
+      - with-redis
+      - production
+
+  agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: deepagents-agent
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    environment:
+      AGENT_MODEL: "${AGENT_MODEL:-openai:gpt-4o-mini}"
+      DATABASE_URL: "postgresql://deepagents:deepagents@postgres:5432/deepagents"
+      REDIS_URL: "redis://redis:6379/0"
+      LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"
+      LANGSMITH_API_KEY: "${LANGSMITH_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
