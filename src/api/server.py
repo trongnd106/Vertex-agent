@@ -22,14 +22,20 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
+
+import sqlite3
 
 from src.config import config
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.store.base import BaseStore
+from langgraph.store.memory import InMemoryStore
 
 from src.api.rate_limit import RateLimiter
 from src.memory.memory_backend import UserContext
@@ -37,7 +43,7 @@ from src.memory.memory_backend import UserContext
 logger = logging.getLogger(__name__)
 
 
-# ── In-memory conversation store ─────────────────────────
+# ── Persistent conversation store (SQLite) ─────────────
 
 
 @dataclass
@@ -53,51 +59,146 @@ class ConversationRecord:
 
 
 class ConversationStore:
-    """Thread-safe in-memory store for conversation metadata.
+    """SQLite-backed store for conversation metadata.
 
-    Falls back to in-memory when no Postgres is available.
-    Later this can be backed by the LangGraph checkpointer.
+    Persists across server restarts so the UI can still list
+    conversations after a restart.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: str) -> None:
         self._lock = threading.Lock()
-        self._conversations: dict[str, ConversationRecord] = {}
+        self._db_path = db_path
+        self._init_db()
+
+    def _init_db(self) -> None:
+        import sqlite3
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    thread_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    messages TEXT NOT NULL DEFAULT '[]'
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversations_user
+                ON conversations(user_id, updated_at DESC)
+            """)
+            conn.commit()
 
     def upsert(self, record: ConversationRecord) -> None:
+        import sqlite3
+        import json
         with self._lock:
-            existing = self._conversations.get(record.thread_id)
-            if existing:
-                existing.title = record.title
-                existing.updated_at = record.updated_at
-                existing.message_count = max(existing.message_count, record.message_count)
-                # Append new messages — deduplicate by content + role to avoid dupes
-                seen = set()
-                for m in existing.messages:
-                    seen.add((m.get("role", ""), m.get("content", "")))
-                for m in record.messages:
-                    key = (m.get("role", ""), m.get("content", ""))
-                    if key not in seen:
-                        existing.messages.append(m)
-                        seen.add(key)
-            else:
-                self._conversations[record.thread_id] = record
+            with sqlite3.connect(self._db_path) as conn:
+                existing = conn.execute(
+                    "SELECT messages FROM conversations WHERE thread_id = ?",
+                    (record.thread_id,),
+                ).fetchone()
+                if existing:
+                    existing_msgs: list[dict] = json.loads(existing[0])
+                    seen = set()
+                    for m in existing_msgs:
+                        seen.add((m.get("role", ""), m.get("content", "")))
+                    for m in record.messages:
+                        key = (m.get("role", ""), m.get("content", ""))
+                        if key not in seen:
+                            existing_msgs.append(m)
+                            seen.add(key)
+                    conn.execute(
+                        """UPDATE conversations
+                           SET title = ?, updated_at = ?, message_count = ?,
+                               messages = ?
+                           WHERE thread_id = ?""",
+                        (
+                            record.title,
+                            record.updated_at.isoformat(),
+                            max(record.message_count, len(existing_msgs) // 2),
+                            json.dumps(existing_msgs, default=str),
+                            record.thread_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO conversations
+                           (thread_id, user_id, title, created_at, updated_at,
+                            message_count, messages)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            record.thread_id,
+                            record.user_id,
+                            record.title,
+                            record.created_at.isoformat(),
+                            record.updated_at.isoformat(),
+                            record.message_count,
+                            json.dumps(record.messages, default=str),
+                        ),
+                    )
+                conn.commit()
 
     def list_by_user(self, user_id: str) -> list[ConversationRecord]:
+        import sqlite3
+        import json
         with self._lock:
-            convs = [c for c in self._conversations.values() if c.user_id == user_id]
-            convs.sort(key=lambda c: c.updated_at, reverse=True)
-            return convs
+            with sqlite3.connect(self._db_path) as conn:
+                rows = conn.execute(
+                    """SELECT thread_id, user_id, title, created_at, updated_at,
+                              message_count, messages
+                       FROM conversations
+                       WHERE user_id = ?
+                       ORDER BY updated_at DESC""",
+                    (user_id,),
+                ).fetchall()
+                result: list[ConversationRecord] = []
+                for row in rows:
+                    result.append(ConversationRecord(
+                        thread_id=row[0],
+                        user_id=row[1],
+                        title=row[2],
+                        created_at=datetime.fromisoformat(row[3]),
+                        updated_at=datetime.fromisoformat(row[4]),
+                        message_count=row[5],
+                        messages=json.loads(row[6]),
+                    ))
+                return result
 
     def get(self, thread_id: str) -> ConversationRecord | None:
+        import sqlite3
+        import json
         with self._lock:
-            return self._conversations.get(thread_id)
+            with sqlite3.connect(self._db_path) as conn:
+                row = conn.execute(
+                    """SELECT thread_id, user_id, title, created_at, updated_at,
+                              message_count, messages
+                       FROM conversations WHERE thread_id = ?""",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                return ConversationRecord(
+                    thread_id=row[0],
+                    user_id=row[1],
+                    title=row[2],
+                    created_at=datetime.fromisoformat(row[3]),
+                    updated_at=datetime.fromisoformat(row[4]),
+                    message_count=row[5],
+                    messages=json.loads(row[6]),
+                )
 
     def delete(self, thread_id: str) -> bool:
+        import sqlite3
         with self._lock:
-            if thread_id in self._conversations:
-                del self._conversations[thread_id]
-                return True
-            return False
+            with sqlite3.connect(self._db_path) as conn:
+                cur = conn.execute(
+                    "DELETE FROM conversations WHERE thread_id = ?",
+                    (thread_id,),
+                )
+                conn.commit()
+                return cur.rowcount > 0
 
 
 # ── Pydantic models ───────────────────────────────────────────────────
@@ -141,12 +242,16 @@ class ServerState:
     total_requests: int = 0
     rate_limiter: RateLimiter = field(default_factory=lambda: RateLimiter(capacity=60, refill_rate=1.0))
     graph: Any = None
+    checkpointer: Any = None
+    """In-memory checkpointer for persisting thread state across invocations."""
+    store: BaseStore | None = None
+    """In-memory store for cross-session memory when running standalone."""
 
 
 server_state = ServerState()
 
-#: Global conversation metadata store (in-memory, ephemeral).
-conversation_store = ConversationStore()
+#: Global conversation metadata store (SQLite-backed, created in lifespan).
+conversation_store: ConversationStore | None = None
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────
@@ -158,19 +263,74 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing agent server...")
     server_state.started_at = time.time()
 
+    # ── Create SQLite-backed checkpointer and store ──────────────────────
+    # These persist thread state (conversation history) and cross-session
+    # memory across server restarts. Stored in .vertex/agent/ in the
+    # project root.
+    data_dir = Path(__file__).resolve().parent.parent.parent / ".vertex" / "agent"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    sqlite_path = str(data_dir / "checkpoints.sqlite")
+
+    # SqliteSaver — persist thread checkpoints across restarts
+    sqlite_conn = sqlite3.connect(sqlite_path, check_same_thread=False)
+    sqlite_conn.execute("PRAGMA journal_mode=WAL")
+    sqlite_conn.execute("PRAGMA synchronous=NORMAL")
+    server_state.checkpointer = SqliteSaver(sqlite_conn)
+    # InMemoryStore is ephemeral by nature — switch to SQL-based store if
+    # deepagents/long-term memory needs persist across restarts.
+    server_state.store = InMemoryStore()
+    logger.info("SQLite checkpointer created at %s", sqlite_path)
+
+    # ── Persistent conversation store ────────────────────────────────────
+    global conversation_store
+    conversation_store = ConversationStore(str(data_dir / "conversations.sqlite"))
+    logger.info("Conversation store created at %s", data_dir / "conversations.sqlite")
+
     # Import the compiled graph (lazy, so server.py doesn't need LLM keys at import)
     try:
         import importlib
-        mod = importlib.import_module("src.agent.server")
-        graph = getattr(mod, "graph", None)
-        if graph is not None:
-            server_state.graph = graph
-            logger.info("Agent graph loaded successfully (%s)", type(graph).__name__)
-        else:
-            logger.warning("Agent server module has no 'graph' attribute")
+
+        # Rebuild the graph WITH checkpointer + store so it doesn't
+        # crash on get_store() / .aget() when running standalone.
+        graph_mod = importlib.import_module("src.agent.graph")
+        build_fn = getattr(graph_mod, "build_agent")
+
+        # Resolve model the same way src/agent/server.py does
+        from src.agent.server import _model_from_env
+
+        model = _model_from_env()
+        from src.agent.system_prompt import build_system_prompt
+
+        system_prompt = build_system_prompt(
+            model_name=model.split(":", 1)[1] if ":" in model else model,
+            provider_name=config.LLM_PROVIDER or "OpenAI",
+            show_env_hints=True,
+        )
+
+        server_state.graph = build_fn(
+            model=model,
+            system_prompt=system_prompt,
+            checkpointer=server_state.checkpointer,
+            store=server_state.store,
+        )
+        logger.info(
+            "Agent graph built with checkpointer + store (%s)",
+            type(server_state.graph).__name__,
+        )
     except Exception as exc:
-        logger.warning("Agent graph not available at startup: %s", exc)
-        server_state.graph = None
+        logger.warning("Agent graph build failed (%s); trying pre-compiled graph", exc)
+        # Fallback: try the pre-compiled module-level graph (no checkpointer)
+        try:
+            mod = importlib.import_module("src.agent.server")
+            graph = getattr(mod, "graph", None)
+            if graph is not None:
+                server_state.graph = graph
+                logger.info("Fallback: loaded pre-compiled graph (%s)", type(graph).__name__)
+            else:
+                logger.warning("Fallback: agent server module has no 'graph' attribute")
+        except Exception as exc2:
+            logger.warning("Fallback also failed: %s", exc2)
+            server_state.graph = None
 
     yield
 
@@ -276,22 +436,48 @@ def create_app() -> FastAPI:
         """Synchronous agent invocation.
 
         Sends a message to the agent and returns the full response.
+        The agent sees the full conversation history because:
+        1. Previous messages are loaded from the checkpointer (thread state)
+        2. The new user message is appended
         """
         check_rate_limit(request.user_id)
 
         if server_state.graph is None:
             raise HTTPException(status_code=503, detail="Agent graph not loaded")
 
-        # Prepare input state
-        input_state = {
-            "messages": [{"role": "user", "content": request.message}],
-            "metadata": request.metadata,
-        }
+        # ── Build config for this invocation ─────────────────────────────
+        run_config = {"configurable": {"thread_id": request.thread_id}}
 
         try:
+            # ── Load existing thread state for conversation history ──────
+            existing_messages: list[dict | Any] = []
+            try:
+                state = await server_state.graph.aget_state(run_config)
+                if state is not None and hasattr(state, "values"):
+                    stored = state.values.get("messages", [])
+                    if stored:
+                        existing_messages = list(stored)
+                        logger.debug(
+                            "Loaded %d existing messages for thread %s",
+                            len(existing_messages),
+                            request.thread_id,
+                        )
+            except Exception as state_err:
+                # First call for this thread — no state yet, that's fine
+                logger.debug("No existing state for thread %s: %s", request.thread_id, state_err)
+
+            # ── Append new user message ─────────────────────────────────
+            new_message: dict | Any = {"role": "user", "content": request.message}
+            all_messages = list(existing_messages) + [new_message]
+
+            input_state = {
+                "messages": all_messages,
+                "metadata": request.metadata,
+            }
+
             result = await server_state.graph.ainvoke(
                 input_state,
-                {"configurable": {"thread_id": request.thread_id}},
+                run_config,
                 context=UserContext(user_id=request.user_id),
             )
             messages = result.get("messages", [])
@@ -336,16 +522,17 @@ def create_app() -> FastAPI:
             messages_out = filtered
 
             # Auto-save conversation messages + metadata
-            title = request.message[:40] + ("..." if len(request.message) > 40 else "")
-            conversation_store.upsert(ConversationRecord(
-                thread_id=request.thread_id,
-                user_id=request.user_id,
-                title=title,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-                message_count=len(messages) // 2,  # approx turns
-                messages=messages_out,
-            ))
+            if conversation_store is not None:
+                title = request.message[:40] + ("..." if len(request.message) > 40 else "")
+                conversation_store.upsert(ConversationRecord(
+                    thread_id=request.thread_id,
+                    user_id=request.user_id,
+                    title=title,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                    message_count=len(messages) // 2,  # approx turns
+                    messages=messages_out,
+                ))
 
             return {
                 "thread_id": request.thread_id,
@@ -361,14 +548,31 @@ def create_app() -> FastAPI:
         """Streaming agent invocation (SSE).
 
         Sends a message and streams the response as server-sent events.
+        The agent sees the full conversation history.
         """
         check_rate_limit(request.user_id)
 
         if server_state.graph is None:
             raise HTTPException(status_code=503, detail="Agent graph not loaded")
 
+        run_config = {"configurable": {"thread_id": request.thread_id}}
+
+        # ── Load existing thread state for conversation history ──────────
+        existing_messages: list[dict | Any] = []
+        try:
+            state = await server_state.graph.aget_state(run_config)
+            if state is not None and hasattr(state, "values"):
+                stored = state.values.get("messages", [])
+                if stored:
+                    existing_messages = list(stored)
+        except Exception:
+            pass  # First call for this thread — no state yet
+
+        new_message: dict | Any = {"role": "user", "content": request.message}
+        all_messages = list(existing_messages) + [new_message]
+
         input_state = {
-            "messages": [{"role": "user", "content": request.message}],
+            "messages": all_messages,
             "metadata": request.metadata,
         }
 
@@ -376,7 +580,7 @@ def create_app() -> FastAPI:
             try:
                 async for event in server_state.graph.astream_events(
                     input_state,
-                    {"configurable": {"thread_id": request.thread_id}},
+                    run_config,
                     context=UserContext(user_id=request.user_id),
                     version="v2",
                 ):
@@ -436,6 +640,8 @@ def create_app() -> FastAPI:
     @app.get("/conversations")
     async def list_conversations(user_id: str = Query("anonymous")):
         """List all conversations for a user, newest first."""
+        if conversation_store is None:
+            return []
         convs = conversation_store.list_by_user(user_id)
         return [
             {
@@ -451,6 +657,8 @@ def create_app() -> FastAPI:
     @app.get("/conversations/{thread_id}")
     async def get_conversation(thread_id: str):
         """Get conversation details including messages."""
+        if conversation_store is None:
+            raise HTTPException(status_code=503, detail="Conversation store not ready")
         record = conversation_store.get(thread_id)
         if not record:
             raise HTTPException(status_code=404, detail="Conversation not found")
@@ -466,6 +674,8 @@ def create_app() -> FastAPI:
     @app.delete("/conversations/{thread_id}")
     async def delete_conversation(thread_id: str):
         """Delete a conversation record."""
+        if conversation_store is None:
+            raise HTTPException(status_code=503, detail="Conversation store not ready")
         if conversation_store.delete(thread_id):
             return {"status": "deleted", "thread_id": thread_id}
         # Still return success — record may have already been cleaned up
@@ -474,6 +684,8 @@ def create_app() -> FastAPI:
     @app.patch("/conversations/{thread_id}")
     async def update_conversation(thread_id: str, request: Request):
         """Update conversation metadata (e.g. rename title)."""
+        if conversation_store is None:
+            raise HTTPException(status_code=503, detail="Conversation store not ready")
         body = await request.json()
         title = body.get("title", "")
         if not title:
