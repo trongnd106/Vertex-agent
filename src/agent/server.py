@@ -113,4 +113,4 @@ except Exception as exc:
     logger.warning("Top-level graph build failed (%s); using stub", exc)
     graph = _build_stub_graph()
 
-__all__ = ["DEFAULT_MODEL", "graph"]
+__all__ = ["DEFAULT_MODEL", "_model_from_env", "graph"]

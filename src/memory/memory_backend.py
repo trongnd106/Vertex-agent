@@ -117,6 +117,7 @@ def build_memory_filesystem(
     """
     from deepagents.backends.composite import CompositeBackend
     from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.backends.local_shell import LocalShellBackend
     from deepagents.backends.store import StoreBackend
 
     store_backend = StoreBackend(
@@ -124,7 +125,7 @@ def build_memory_filesystem(
         store=store,
     )
     return CompositeBackend(
-        default=FilesystemBackend(root_dir="."),
+        default=LocalShellBackend(root_dir="."),
         routes={MEMORY_ROUTE: store_backend},
     )
 
