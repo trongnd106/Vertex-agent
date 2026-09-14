@@ -35,6 +35,7 @@ from src.graph.types import (
 )
 from src.graph.channels import LastValue, Topic
 from src.graph.node import AgentNode, NodeDefinition
+from src.streaming.execution_log import ExecutionLogger
 
 StateT = TypeVar("StateT", bound=dict[str, Any])
 
@@ -93,6 +94,8 @@ class PregelLoop(Generic[StateT]):
         self._store = store
         self._step = 0  # track current step number
         self._nodes_executed_this_step: set[str] = set()
+        self._execution_logger: ExecutionLogger | None = None
+        """Optional step-by-step execution logger for failure pin-pointing."""
 
         # Build adjacency for quick lookup
         self._outgoing: dict[str, list[str]] = {}
@@ -132,7 +135,11 @@ class PregelLoop(Generic[StateT]):
         node_name: str,
         state: dict[str, Any],
     ) -> tuple[dict[str, Any] | list | None, Exception | None]:
-        """Execute a single node and return (output, error)."""
+        """Execute a single node and return (output, error).
+
+        Logs the step start/completion/failure to the execution logger
+        (if configured), so failures can be traced to the exact step.
+        """
         node_def = self._nodes.get(node_name)
         if node_def is None:
             return None, ValueError(f"Node {node_name!r} not found")
@@ -140,6 +147,17 @@ class PregelLoop(Generic[StateT]):
         fn = node_def.fn
         error: Exception | None = None
         output: Any = None
+
+        # ── Log step start ──────────────────────────────────────────────
+        exec_log = self._execution_logger
+        step = None
+        if exec_log is not None:
+            step = exec_log.start_step(
+                node_name=node_name,
+                node_type="agent_node" if isinstance(fn, (AgentNode, type)) else "function",
+                input_state=state,
+                metadata={"step": self._step, "node_attempt": 1},
+            )
 
         try:
             if isinstance(fn, AgentNode):
@@ -154,8 +172,32 @@ class PregelLoop(Generic[StateT]):
                 instance.after_node(state, output)
             else:
                 output = fn(state)
+
+            # ── Log step completion ─────────────────────────────────────
+            if exec_log and step is not None:
+                output_preview = ""
+                if isinstance(output, dict):
+                    keys = list(output.keys())
+                    output_preview = f"<dict keys={keys[:5]}>"
+                elif isinstance(output, (list, tuple)):
+                    output_preview = f"<{type(output).__name__} len={len(output)}>"
+                elif isinstance(output, str):
+                    output_preview = output[:200]
+                elif output is not None:
+                    output_preview = str(output)[:200]
+
+                exec_log.complete_step(step, output_preview=output_preview)
+
         except Exception as e:
             error = e
+
+            # ── Log step failure ────────────────────────────────────────
+            if exec_log and step is not None:
+                exec_log.fail_step(
+                    step,
+                    error=e,
+                    metadata={"traceback": traceback.format_exc()},
+                )
 
         return output, error
 
@@ -252,6 +294,19 @@ class PregelLoop(Generic[StateT]):
 
     # ── Main loop ─────────────────────────────────────────────────────
 
+    @property
+    def execution_logger(self) -> ExecutionLogger | None:
+        """Get the configured execution logger, if any."""
+        return self._execution_logger
+
+    def set_execution_logger(self, logger: ExecutionLogger) -> None:
+        """Attach an execution logger for step-by-step tracing.
+
+        Args:
+            logger: An ``ExecutionLogger`` instance.
+        """
+        self._execution_logger = logger
+
     def run(
         self,
         initial_state: dict[str, Any],
@@ -276,6 +331,21 @@ class PregelLoop(Generic[StateT]):
         start_time = time.monotonic()
         interrupted: Interrupt | None = None
         error: Exception | None = None
+
+        exec_log = self._execution_logger
+
+        # ── Start execution run ─────────────────────────────────────────
+        run_id: str | None = None
+        if exec_log is not None:
+            thread_id = config.get("thread_id", "unknown") if config else "unknown"
+            run_id = exec_log.start_run(
+                run_id=f"graph_{thread_id}_{int(time.time())}",
+                metadata={
+                    "entry_point": self._entry_point,
+                    "finish_points": list(self._finish_points),
+                    "thread_id": thread_id,
+                },
+            )
 
         # Emit initial state if streaming
         if stream_handler:
@@ -367,10 +437,38 @@ class PregelLoop(Generic[StateT]):
                                 },
                             )
                         )
+
+                    # ── Log the run failure step info ───────────────────
+                    if exec_log is not None:
+                        failed_info = exec_log.get_failed_step_info()
+                        if failed_info:
+                            _logger_impl = logging.getLogger(__name__)
+                            _logger_impl.warning(
+                                "Agent execution failed at: %s", failed_info
+                            )
                     break
 
             if interrupted or error:
                 break
+
+        # ── Finish execution run ────────────────────────────────────────
+        if exec_log is not None:
+            exec_log.finish_run(error=error)
+
+            # Log the final summary at info level
+            _logger_impl = logging.getLogger(__name__)
+            if error or exec_log.failed_step:
+                _logger_impl.warning(
+                    "Execution run %s FAILED:\n%s",
+                    run_id,
+                    exec_log.get_run_summary(),
+                )
+            else:
+                _logger_impl.info(
+                    "Execution run %s completed: %d steps",
+                    run_id,
+                    step,
+                )
 
         # Emit finish chunk
         if stream_handler:
@@ -638,6 +736,13 @@ class CompiledGraph(Generic[StateT]):
             checkpointer=self._checkpointer,
             store=self._store,
         )
+
+        # Attach execution logger if provided via config
+        if config and "execution_logger" in config:
+            loop.set_execution_logger(config["execution_logger"])
+        elif config and "execution_log" in config:
+            # Accept both "execution_logger" and "execution_log" keys
+            loop.set_execution_logger(config["execution_log"])
 
         return loop.run(
             initial_state,

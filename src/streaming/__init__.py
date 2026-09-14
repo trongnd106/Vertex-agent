@@ -44,6 +44,12 @@ from src.streaming.formatters import (
     OpenAIFormatter,
     StreamFormatter,
 )
+from src.streaming.execution_log import (
+    ExecutionLogger,
+    ExecutionRun,
+    ExecutionStep,
+    StepStatus,
+)
 from src.streaming.observability import (
     DebugMode,
     DebugSnapshot,
@@ -99,6 +105,11 @@ __all__ = [
     "Span",
     "StructuredLogger",
     "Tracer",
+    # execution log
+    "ExecutionLogger",
+    "ExecutionRun",
+    "ExecutionStep",
+    "StepStatus",
     # gateway
     "BackpressureController",
     "BatchBuffer",

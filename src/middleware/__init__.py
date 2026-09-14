@@ -41,8 +41,11 @@ middleware pipeline.
 Overridable via ``MiddlewareProfile`` exclusion and merge strategy.
 """
 
+from src.middleware.execution_log import (
+    ExecutionLogMiddleware,
+    with_execution_log,
+)
 from src.middleware.progress import (
-    AgentCurrentStateMiddleware,
     FirstMiddleware,
     LastMiddleware,
     ProgressMiddleware,
@@ -93,6 +96,9 @@ from src.middleware.types import (
 )
 
 __all__ = [
+    # Execution log
+    "ExecutionLogMiddleware",
+    "with_execution_log",
     # Base types
     "AgentMiddleware",
     "MiddlewareConfig",

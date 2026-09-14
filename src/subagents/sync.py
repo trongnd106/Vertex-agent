@@ -18,6 +18,7 @@ from typing import Any, Callable
 from src.graph.types import Command
 from src.middleware.stack import MiddlewareStack
 from src.middleware.types import AgentMiddleware, MiddlewareConfig
+from src.streaming.execution_log import ExecutionLogger
 from src.tools.filesystem import ToolResult
 from src.tools.registry import ToolRegistry, ToolSpec
 
@@ -52,6 +53,11 @@ class CompiledSubAgent:
 
     spec: SubAgent
     _executor: Callable[[dict[str, Any]], ToolResult] | None = None
+    _execution_logger: ExecutionLogger | None = None
+
+    def set_execution_logger(self, logger: ExecutionLogger) -> None:
+        """Attach an execution logger for step-by-step tracing."""
+        self._execution_logger = logger
 
     def invoke(self, input_data: dict[str, Any]) -> ToolResult:
         """Run the subagent with the given input.
@@ -64,6 +70,17 @@ class CompiledSubAgent:
         """
         if self._executor:
             return self._executor(input_data)
+
+        # ── Log subagent execution start ──────────────────────────────
+        exec_log = self._execution_logger
+        step = None
+        if exec_log is not None:
+            step = exec_log.start_step(
+                node_name=f"subagent:{self.spec.name}",
+                node_type="subagent",
+                input_state=input_data if isinstance(input_data, dict) else {"input": str(input_data)[:200]},
+                metadata={"model": self.spec.model, "tools": [t.name for t in self.spec.tools]},
+            )
 
         # Default execution: run middleware chain then return
         middleware_stack = MiddlewareStack()
@@ -80,12 +97,31 @@ class CompiledSubAgent:
         try:
             state, _ = compiled.run_before_agent(input_data, None, config)
 
-            return ToolResult(
+            result = ToolResult(
                 success=True,
                 data=f"SubAgent '{self.spec.name}' executed",
                 metadata={"subagent": self.spec.name, "state": state},
             )
+
+            # ── Log success ───────────────────────────────────────────
+            if exec_log and step is not None:
+                exec_log.complete_step(
+                    step,
+                    output_preview=f"SubAgent '{self.spec.name}' completed",
+                    metadata={"state_keys": list(state.keys())[:10]},
+                )
+
+            return result
+
         except Exception as e:
+            # ── Log failure ───────────────────────────────────────────
+            if exec_log and step is not None:
+                exec_log.fail_step(
+                    step,
+                    error=e,
+                    metadata={"subagent": self.spec.name},
+                )
+
             return ToolResult(
                 success=False,
                 error=f"SubAgent '{self.spec.name}' failed: {e}",
@@ -162,17 +198,30 @@ class SubAgentMiddleware(AgentMiddleware):
         self,
         registry: SubAgentRegistry | None = None,
         propagation_fields: list[str] | None = None,
+        execution_logger: ExecutionLogger | None = None,
     ) -> None:
         super().__init__()
         self._registry = registry or SubAgentRegistry()
         self._propagation_fields = propagation_fields or []
+        self._execution_logger = execution_logger
 
         # Register default subagent
         self._registry.register(DEFAULT_SUBAGENT_SPEC)
 
+        # Propagate execution logger to all compiled subagents
+        if execution_logger is not None:
+            for compiled in self._registry._compiled.values():
+                compiled.set_execution_logger(execution_logger)
+
     @property
     def registry(self) -> SubAgentRegistry:
         return self._registry
+
+    def set_execution_logger(self, logger: ExecutionLogger) -> None:
+        """Set or update the execution logger for all subagents."""
+        self._execution_logger = logger
+        for compiled in self._registry._compiled.values():
+            compiled.set_execution_logger(logger)
 
     async def before_agent(self, config: MiddlewareConfig) -> None:
         pass
