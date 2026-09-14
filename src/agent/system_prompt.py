@@ -50,7 +50,15 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "its structure, then analyze it.\n"
     "- For code review, read the relevant source files before giving feedback.\n"
     "- Always write_file(\"/memory/notes.md\", ...) when you learn a durable user "
-    "fact or preference."
+    "fact or preference.\n"
+    "- **execute(command='...')**: Execute shell commands directly (bash). "
+    "You have FULL permission to use this tool to run any system command. "
+    "Use it to: install packages, run scripts, build projects, inspect files, etc.\n"
+    "  Example: execute(command='ls -la'), execute(command='pip install pytest'), "
+    "execute(command='python -c \"print(1+1)\"'), execute(command='node app.js').\n"
+    "- **grep and glob_files**: Available for searching the codebase — no need to "
+    "use shell grep/find.\n"
+    "- **ls**: List directory contents."
 )
 
 TASK_COMPLETION_GUIDANCE = (
