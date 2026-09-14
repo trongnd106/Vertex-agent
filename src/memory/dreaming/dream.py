@@ -235,7 +235,7 @@ def build_dream_agent(
     Args:
         model: The (cheap) extraction model — a ``provider:model`` string or a
             ``BaseChatModel`` instance (fake in tests). Kept as an injectable
-            param so production can pass e.g. ``"openai:gpt-4o-mini"`` and
+            param so production can pass e.g. ``"DeepSeek-V4-Flash"`` and
             tests can pass a `StructuredScriptedModel`.
         store: The `BaseStore` (same instance/database the main agent uses).
         checkpointer: The checkpointer whose per-thread history to dream over.

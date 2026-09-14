@@ -7,7 +7,7 @@ deployment:
   max_concurrency: 5
   workspace_dir: ./workspace
 agent:
-  model: "openai:gpt-4o-mini"
+  model: "DeepSeek-V4-Flash"
   max_iterations: 50
   middleware: "security,tool_injection,summarization,progress"
   tool_permissions:

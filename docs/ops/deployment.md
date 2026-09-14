@@ -22,7 +22,7 @@ pip install -e ".[dev]"
 docker compose -f infra/docker-compose.yml up postgres -d
 
 # 3. Run agent
-AGENT_MODEL="openai:gpt-4o-mini" \
+AGENT_MODEL="DeepSeek-V4-Flash" \
   langgraph dev --host 0.0.0.0 --port 8000
 ```
 
@@ -43,7 +43,7 @@ docker compose ps
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AGENT_MODEL` | `openai:gpt-4o-mini` | Provider:model for the agent |
+| `AGENT_MODEL` | `DeepSeek-V4-Flash` | Provider:model for the agent |
 | `DATABASE_URL` | `postgresql://deepagents:deepagents@localhost:5432/deepagents` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `LANGSMITH_TRACING` | `false` | Enable LangSmith tracing |

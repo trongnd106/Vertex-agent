@@ -51,7 +51,7 @@ services:
       - "8000:8000"
       - "8001:8001"
     environment:
-      AGENT_MODEL: "${AGENT_MODEL:-openai:gpt-4o-mini}"
+      AGENT_MODEL: "${AGENT_MODEL:-DeepSeek-V4-Flash}"
       DATABASE_URL: "postgresql://deepagents:deepagents@postgres:5432/deepagents"
       REDIS_URL: "redis://redis:6379/0"
       LANGSMITH_TRACING: "${LANGSMITH_TRACING:-false}"

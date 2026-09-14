@@ -31,7 +31,7 @@ from src.config import config
 #: Default provider:model used when ``AGENT_MODEL`` is not set. The LangGraph
 #: server reaches an LLM provider only when a real key/provider is configured at
 #: runtime (M1); this default just lets the module import and the server boot.
-DEFAULT_MODEL = "openai:gpt-4o-mini"
+DEFAULT_MODEL = "DeepSeek-V4-Flash"
 
 
 def _model_from_env() -> str:

@@ -193,7 +193,7 @@ def build_sequential_graph(
 def to_deep_agent_params(
     graph: CompiledGraph[Any],
     *,
-    model: str | Any = "openai:gpt-4o-mini",
+    model: str | Any = "DeepSeek-V4-Flash",
     system_prompt: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
@@ -240,7 +240,7 @@ def to_deep_agent_params(
 
 def build_from_deep_agent(
     *,
-    model: str | Any = "openai:gpt-4o-mini",
+    model: str | Any = "DeepSeek-V4-Flash",
     system_prompt: str | None = None,
     middleware: Sequence[Any] | None = None,
     subagents: Sequence[Any] | None = None,

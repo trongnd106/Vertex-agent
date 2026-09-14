@@ -51,7 +51,7 @@ _load_dotenv(_env_path)
 class _Config:
     # ── Agent Model ────────────────────────────────────────────
     AGENT_MODEL: str = field(
-        default_factory=lambda: os.environ.get("AGENT_MODEL", "openai:gpt-4o-mini")
+        default_factory=lambda: os.environ.get("AGENT_MODEL", "DeepSeek-V4-Flash")
     )
     """LLM model string: ``<provider>:<model-name>``."""
 
@@ -224,7 +224,7 @@ config = _Config()
 >>> config.DATABASE_URL
 'postgresql://...'
 >>> config.AGENT_MODEL
-'openai:gpt-4o-mini'
+'DeepSeek-V4-Flash'
 """
 
 __all__ = ["config"]

@@ -557,7 +557,7 @@ Nằm tại `deepagents/middleware/filesystem.py`:
   {
     "python_version": "3.11",
     "graphs": { "agent": "./src/agent/server.py:graph" },
-    "env": { "AGENT_MODEL": "openai:gpt-4o-mini" },
+    "env": { "AGENT_MODEL": "DeepSeek-V4-Flash" },
     "dependencies": ["."],
     "checkpointer": "postgres"
   }

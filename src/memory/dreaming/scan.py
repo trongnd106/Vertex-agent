@@ -7,7 +7,7 @@ actually *processes* threads — either on demand or as a cron-style cold scan:
 - ``scan_thread_ids`` (in `loader.py`) enumerates every top-level thread id
   recorded in a checkpointer.
 - :func:`dream_thread` runs the dream graph for one thread.
-- ``python -m src.memory.dreaming.scan --user u1 --model openai:gpt-4o-mini``
+- ``python -m src.memory.dreaming.scan --user u1 --model DeepSeek-V4-Flash``
   scans all threads for the given user and dreams over each (skipping threads
   whose history no longer resolves).
 
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scan", description=__doc__)
     parser.add_argument("--db-url", default=None, help=f"Postgres URL; defaults to DATABASE_URL env or {config.DATABASE_URL!r}. Omit for in-memory.")
     parser.add_argument("--user", required=True, help="user_id whose threads to dream (thread_id->user mapping is not persisted).")
-    parser.add_argument("--model", default="openai:gpt-4o-mini", help="Cheap extraction model spec.")
+    parser.add_argument("--model", default="DeepSeek-V4-Flash", help="Cheap extraction model spec.")
     parser.add_argument("--thread-limit", type=int, default=None, help="Only dream over the first N threads (lexicographic).")
     parser.add_argument(
         "--heartbeat-file",
