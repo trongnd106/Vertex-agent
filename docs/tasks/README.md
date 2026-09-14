@@ -25,17 +25,17 @@ docs/tasks/
 
 ## Danh sách tất cả Tasks
 
-| STT | Task | File | Mục tiêu |
-|-----|------|------|----------|
-| 1 | [Agent Graph Core](./01-agent-graph-core/README.md) | 9 subtasks | Xây dựng core graph engine dựa trên LangGraph Pregel |
-| 2 | [Middleware Stack](./02-middleware-stack/README.md) | 7 subtasks | Xây dựng middleware pipeline theo pattern của orchestrator |
-| 3 | [Tool System](./03-tool-system/README.md) | 6 subtasks | Tool management, MCP integration, sandbox |
-| 4 | [Memory & Persistence](./04-memory-persistence/README.md) | 6 subtasks | Checkpointing, long-term memory, dreaming |
-| 5 | [Subagent & Communication](./05-subagent-communication/README.md) | 5 subtasks | Subagent patterns, async communication, MCP |
-| 6 | [Streaming & Observability](./06-streaming-pipeline/README.md) | 5 subtasks | Streaming pipeline, tracing, monitoring |
-| 7 | [Routing & Control Flow](./07-routing-control-flow/README.md) | 5 subtasks | Conditional routing, loops, human-in-the-loop |
-| 8 | [Backend & Storage](./08-backend-infrastructure/README.md) | 5 subtasks | Backend protocols, composite backend |
-| 9 | [Deployment & Operations](./09-deployment-operations/README.md) | 5 subtasks | Docker, CI/CD, production setup |
-| 10 | [Advanced Features](./10-advanced-features/README.md) | 5 subtasks | Dreaming, self-improvement, rubric |
+| STT | Task                                                              | File       | Mục tiêu                                                   |
+| --- | ----------------------------------------------------------------- | ---------- | ---------------------------------------------------------- |
+| 1   | [Agent Graph Core](./01-agent-graph-core/README.md)               | 9 subtasks | Xây dựng core graph engine dựa trên LangGraph Pregel       |
+| 2   | [Middleware Stack](./02-middleware-stack/README.md)               | 7 subtasks | Xây dựng middleware pipeline theo pattern của orchestrator |
+| 3   | [Tool System](./03-tool-system/README.md)                         | 6 subtasks | Tool management, MCP integration, sandbox                  |
+| 4   | [Memory & Persistence](./04-memory-persistence/README.md)         | 6 subtasks | Checkpointing, long-term memory, dreaming                  |
+| 5   | [Subagent & Communication](./05-subagent-communication/README.md) | 5 subtasks | Subagent patterns, async communication, MCP                |
+| 6   | [Streaming & Observability](./06-streaming-pipeline/README.md)    | 5 subtasks | Streaming pipeline, tracing, monitoring                    |
+| 7   | [Routing & Control Flow](./07-routing-control-flow/README.md)     | 5 subtasks | Conditional routing, loops, human-in-the-loop              |
+| 8   | [Backend & Storage](./08-backend-infrastructure/README.md)        | 5 subtasks | Backend protocols, composite backend                       |
+| 9   | [Deployment & Operations](./09-deployment-operations/README.md)   | 5 subtasks | Docker, CI/CD, production setup                            |
+| 10  | [Advanced Features](./10-advanced-features/README.md)             | 5 subtasks | Dreaming, self-improvement, rubric                         |
 
 **Tổng số subtasks:** ~58 tasks chi tiết

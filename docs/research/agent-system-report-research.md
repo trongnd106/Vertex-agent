@@ -12,44 +12,47 @@ He thong la mot **task-driven orchestration engine** — moi hanh vi chatbot duo
 
 ### Stack Cong Nghe
 
-| Layer | Cong Nghe |
-|---|---|
-| API Server | FastAPI, Port 8345 |
-| Orchestration | TaskEngine (~2200 dong), Python ThreadPool |
-| AI Framework | LangGraph, LangChain, DeepAgents |
-| LLM Access | OpenAI SDK, LiteLLM Proxy, MCP Proxy |
-| State Machine | LangGraph StateGraph (CompiledStateGraph) |
-| Checkpointing | MongoDB (MongoDBSaver) |
-| Store | MongoDB (MongoDBStore) |
-| Streaming | Producer -> Formatter -> Transport -> Gateway |
-| Session State | Redis / HTTP / In-Memory |
-| Observability | Langfuse |
+| Layer         | Cong Nghe                                     |
+| ------------- | --------------------------------------------- |
+| API Server    | FastAPI, Port 8345                            |
+| Orchestration | TaskEngine (~2200 dong), Python ThreadPool    |
+| AI Framework  | LangGraph, LangChain, DeepAgents              |
+| LLM Access    | OpenAI SDK, LiteLLM Proxy, MCP Proxy          |
+| State Machine | LangGraph StateGraph (CompiledStateGraph)     |
+| Checkpointing | MongoDB (MongoDBSaver)                        |
+| Store         | MongoDB (MongoDBStore)                        |
+| Streaming     | Producer -> Formatter -> Transport -> Gateway |
+| Session State | Redis / HTTP / In-Memory                      |
+| Observability | Langfuse                                      |
 
 ### Mo hinh 4-Tier
 
-| Tier | Thanh phan | Vai tro |
-|---|---|---|
-| Tier 1: API Layer | `orchestrator.py` | FastAPI HTTP Server, nhan request va phan phoi |
-| Tier 2: Task Engine | `task_engine.py` | Trung tam orchestration, quan ly TaskExecution lifecycle |
-| Tier 3: Handler Registry | `core/registry.py` + `components/` | Version-aware dispatch, adapter chain |
-| Tier 4: Agent Runtimes | 6+ handler implementations | Thuc thi agent logic (OpenAI loop, DeepAgent v1/v2/v3, AgentExecutor, AIQ) |
+| Tier                     | Thanh phan                         | Vai tro                                                                    |
+| ------------------------ | ---------------------------------- | -------------------------------------------------------------------------- |
+| Tier 1: API Layer        | `orchestrator.py`                  | FastAPI HTTP Server, nhan request va phan phoi                             |
+| Tier 2: Task Engine      | `task_engine.py`                   | Trung tam orchestration, quan ly TaskExecution lifecycle                   |
+| Tier 3: Handler Registry | `core/registry.py` + `components/` | Version-aware dispatch, adapter chain                                      |
+| Tier 4: Agent Runtimes   | 6+ handler implementations         | Thuc thi agent logic (OpenAI loop, DeepAgent v1/v2/v3, AgentExecutor, AIQ) |
 
 ---
 
 ## 2. Cac Thanh Phan Chinh
 
 ### 2.1 Orchestrator (`orchestrator.py`)
+
 - FastAPI server lang nghe port 8345
 - Cac endpoint: `POST /start`, `POST /start_task`, `GET /get_execution`
 - Su dung ThreadPoolExecutor de chay task trong tien trinh rieng (`run_task_in_process()`)
 
 ### 2.2 Task Engine (`task_engine.py`)
+
 - ~2200 dong code — trai tim cua he thong
 - Nhan `TaskExecution` va `task_id`, load task definition tu DB, dispatch toi handler
 - Quan ly: execution lifecycle, variables, errors, events
 - Flow chinh: `start_task()` -> `dispatch_task()` -> `registry.dispatch()`
 
 ### 2.3 Handler Registry (`core/registry.py`)
+
 - **3 chieu:** kind x backend x version
 - Tu dong discover handler qua `autodiscover()` (walk `components/` package)
 - Ho tro **AdapterChain** de migrate payload format giua cac version
@@ -59,14 +62,14 @@ He thong la mot **task-driven orchestration engine** — moi hanh vi chatbot duo
 
 Co **6 agent runtime** khac nhau:
 
-| Runtime | Kind | Backend | Version | Dac diem chinh |
-|---|---|---|---|---|
-| Agent (OpenAI Loop) | Agent | DEFAULT | v1.0.0 | Vong lap LLM don gian, khong streaming, khong middleware |
-| AgentExecutor | AgentExecutor | DEFAULT | - | Thuc thi song song tool calls (ThreadPool, max 3 workers) |
-| DeepAgent v1 | DeepAgent | DEFAULT | v1.0.0 | Base version, it middleware |
-| DeepAgent v2 | Agent | DeepAgent | v1.2.0 | Enhanced: 7 middleware modules, Sandbox, Skills, Memory, Subagents |
-| DeepAgent v3 | Agent | DeepAgent | v3.0.0 | Day du nhat: 15 middleware modules, Async subagents |
-| AIQ Agent | DeepAgent | - | - | Deep Researcher |
+| Runtime             | Kind          | Backend   | Version | Dac diem chinh                                                     |
+| ------------------- | ------------- | --------- | ------- | ------------------------------------------------------------------ |
+| Agent (OpenAI Loop) | Agent         | DEFAULT   | v1.0.0  | Vong lap LLM don gian, khong streaming, khong middleware           |
+| AgentExecutor       | AgentExecutor | DEFAULT   | -       | Thuc thi song song tool calls (ThreadPool, max 3 workers)          |
+| DeepAgent v1        | DeepAgent     | DEFAULT   | v1.0.0  | Base version, it middleware                                        |
+| DeepAgent v2        | Agent         | DeepAgent | v1.2.0  | Enhanced: 7 middleware modules, Sandbox, Skills, Memory, Subagents |
+| DeepAgent v3        | Agent         | DeepAgent | v3.0.0  | Day du nhat: 15 middleware modules, Async subagents                |
+| AIQ Agent           | DeepAgent     | -         | -       | Deep Researcher                                                    |
 
 ### 2.5 Streaming Pipeline
 
@@ -103,13 +106,13 @@ Producer -> Transport -> Formatter -> Gateway
 
 ### 2.7 Tool Categories
 
-| Loai | Type Field | Co che |
-|---|---|---|
-| Task Tool | "tool" | Goi task definition tu DB |
-| Plan Tool | "plan" | Goi plan tu bot khac |
-| MCP Tool | "mcpserver" | Goi MCP server qua LiteLLM proxy |
-| Code Interpreter | "code_interpreter" | Python sandbox |
-| RAGFlow Knowledge | "ragflow_tool" | Retrieval tu knowledge base |
+| Loai              | Type Field         | Co che                           |
+| ----------------- | ------------------ | -------------------------------- |
+| Task Tool         | "tool"             | Goi task definition tu DB        |
+| Plan Tool         | "plan"             | Goi plan tu bot khac             |
+| MCP Tool          | "mcpserver"        | Goi MCP server qua LiteLLM proxy |
+| Code Interpreter  | "code_interpreter" | Python sandbox                   |
+| RAGFlow Knowledge | "ragflow_tool"     | Retrieval tu knowledge base      |
 
 ### 2.8 State Management
 
@@ -132,31 +135,31 @@ Producer -> Transport -> Formatter -> Gateway
 
 ### 3.1 Design Patterns
 
-| Pattern | Ap dung | Vi tri |
-|---|---|---|
-| **Pipeline / Chain of Responsibility** | Middleware stack xu ly agent request theo chain | Middleware modules |
-| **Strategy Pattern** | Nhieu Agent Runtime khac nhau cho cung task type | Registry dispatch |
-| **Factory Pattern** | Tao formatter, handler, message broker | formatters/factory.py, registry |
-| **Adapter Pattern** | Version migration payload | AdapterChain |
-| **Observer Pattern** | Streaming pipeline: Producer -> Transport -> Formatter -> Gateway | Streaming layer |
-| **Registry Pattern** | HandlerRegistry, version-aware dispatch | core/registry.py |
-| **Command Pattern** | Task Execution nhu command | task_engine.py |
-| **Template Method** | BaseHandler dinh nghia handle() template | core/handler.py |
-| **Thread Pool** | Parallel tool execution | AgentExecutor |
-| **Data Flow / Pipeline** | Streaming chunks qua formatters | Streaming pipeline |
+| Pattern                                | Ap dung                                                           | Vi tri                          |
+| -------------------------------------- | ----------------------------------------------------------------- | ------------------------------- |
+| **Pipeline / Chain of Responsibility** | Middleware stack xu ly agent request theo chain                   | Middleware modules              |
+| **Strategy Pattern**                   | Nhieu Agent Runtime khac nhau cho cung task type                  | Registry dispatch               |
+| **Factory Pattern**                    | Tao formatter, handler, message broker                            | formatters/factory.py, registry |
+| **Adapter Pattern**                    | Version migration payload                                         | AdapterChain                    |
+| **Observer Pattern**                   | Streaming pipeline: Producer -> Transport -> Formatter -> Gateway | Streaming layer                 |
+| **Registry Pattern**                   | HandlerRegistry, version-aware dispatch                           | core/registry.py                |
+| **Command Pattern**                    | Task Execution nhu command                                        | task_engine.py                  |
+| **Template Method**                    | BaseHandler dinh nghia handle() template                          | core/handler.py                 |
+| **Thread Pool**                        | Parallel tool execution                                           | AgentExecutor                   |
+| **Data Flow / Pipeline**               | Streaming chunks qua formatters                                   | Streaming pipeline              |
 
 ### 3.2 Workflow Patterns
 
-| Pattern | Mo ta |
-|---|---|
-| **Task-Driven Dispatch** | Moi hanh vi la mot task -> dispatch toi handler phu hop |
-| **Version Migration Flow** | Payload duoc upcast qua AdapterChain truoc khi xu ly |
-| **Streaming Pipeline Flow** | Raw LLM chunks -> StreamChunk -> Formatter -> bytes -> Gateway |
-| **Parallel Execution** | AgentExecutor thuc thi tool calls song song (max 3 workers) |
-| **Subagent Spawning** | Agent tao subagent de xu ly task con |
-| **Error-as-Event** | Exception duoc convert thanh EventToTriggerTask de xu ly tap trung |
-| **Autodiscovery** | Tu dong phat hien handler khi khoi dong |
-| **Checkpoint/Resume** | MongoDB checkpointer cho phep resume agent state |
+| Pattern                     | Mo ta                                                              |
+| --------------------------- | ------------------------------------------------------------------ |
+| **Task-Driven Dispatch**    | Moi hanh vi la mot task -> dispatch toi handler phu hop            |
+| **Version Migration Flow**  | Payload duoc upcast qua AdapterChain truoc khi xu ly               |
+| **Streaming Pipeline Flow** | Raw LLM chunks -> StreamChunk -> Formatter -> bytes -> Gateway     |
+| **Parallel Execution**      | AgentExecutor thuc thi tool calls song song (max 3 workers)        |
+| **Subagent Spawning**       | Agent tao subagent de xu ly task con                               |
+| **Error-as-Event**          | Exception duoc convert thanh EventToTriggerTask de xu ly tap trung |
+| **Autodiscovery**           | Tu dong phat hien handler khi khoi dong                            |
+| **Checkpoint/Resume**       | MongoDB checkpointer cho phep resume agent state                   |
 
 ---
 
@@ -207,36 +210,36 @@ User -> API -> TaskEngine -> Registry -> Handler -> Agent Runtime
 
 ### 5.1 Scalability
 
-| Aspect | Implementation |
-|---|---|
-| **Parallel Execution** | ThreadPoolExecutor (max 3 workers) cho tool calls |
-| **Async Subagents** | Subagents chay trong LangGraph deployment rieng |
-| **Session State** | Redis backend cho phan tan nhieu instance |
-| **Streaming** | Bat dong bo, khong block thread |
-| **Handler Registry** | Version-aware, de dang them handler moi |
-| **Autodiscovery** | Tu dong phat hien component, khong can config thu cong |
+| Aspect                 | Implementation                                         |
+| ---------------------- | ------------------------------------------------------ |
+| **Parallel Execution** | ThreadPoolExecutor (max 3 workers) cho tool calls      |
+| **Async Subagents**    | Subagents chay trong LangGraph deployment rieng        |
+| **Session State**      | Redis backend cho phan tan nhieu instance              |
+| **Streaming**          | Bat dong bo, khong block thread                        |
+| **Handler Registry**   | Version-aware, de dang them handler moi                |
+| **Autodiscovery**      | Tu dong phat hien component, khong can config thu cong |
 
 ### 5.2 Reliability
 
-| Aspect | Implementation |
-|---|---|
-| **Checkpointing** | MongoDB checkpointer: resume agent state khi fail |
-| **Retry Policy** | Transport: max_attempts, backoff, retry_statuses (429, 502, 503, 504) |
-| **Replay Buffer** | 2MB replay buffer cho midstream failure recovery |
-| **CancelToken** | Huy streaming khi can |
-| **Error as Event** | Exception duoc convert thanh event, xu ly tap trung |
-| **Model Fallback** | Middleware model_fallback.py |
-| **Tool Retry** | Middleware tool_retry.py |
-| **Model Call Limit** | Middleware model_call_limit.py |
-| **Adapters** | Version migration khong breaking change |
+| Aspect               | Implementation                                                        |
+| -------------------- | --------------------------------------------------------------------- |
+| **Checkpointing**    | MongoDB checkpointer: resume agent state khi fail                     |
+| **Retry Policy**     | Transport: max_attempts, backoff, retry_statuses (429, 502, 503, 504) |
+| **Replay Buffer**    | 2MB replay buffer cho midstream failure recovery                      |
+| **CancelToken**      | Huy streaming khi can                                                 |
+| **Error as Event**   | Exception duoc convert thanh event, xu ly tap trung                   |
+| **Model Fallback**   | Middleware model_fallback.py                                          |
+| **Tool Retry**       | Middleware tool_retry.py                                              |
+| **Model Call Limit** | Middleware model_call_limit.py                                        |
+| **Adapters**         | Version migration khong breaking change                               |
 
 ### 5.3 Observability
 
-| Tool | Purpose |
-|---|---|
-| **Langfuse** | Trace LLM calls |
+| Tool                | Purpose                           |
+| ------------------- | --------------------------------- |
+| **Langfuse**        | Trace LLM calls                   |
 | **LangGraph Debug** | StreamCollector, FileDebugPrinter |
-| **MongoDB** | Checkpointing & Store |
+| **MongoDB**         | Checkpointing & Store             |
 
 ---
 
@@ -369,4 +372,4 @@ orchestrator/
 
 ---
 
-*Tai lieu tham khao:* `/home/trongnd/Documents/orchestrator/agent-system-report.md`
+_Tai lieu tham khao:_ `/home/trongnd/Documents/orchestrator/agent-system-report.md`
